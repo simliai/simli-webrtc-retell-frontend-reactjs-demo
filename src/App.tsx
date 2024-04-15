@@ -22,6 +22,8 @@ const App = () => {
   const lastFrameTimeRef = useRef(performance.now());
   const audioStarted = useRef(false);
   const firstFrameReceived = useRef(false);
+  const audioOriginal = useRef<Uint8Array[]>([]);
+  const audioStreamed = useRef<Uint8Array[]>([]);
 
   const [updateMessage, setUpdateMessage] = useState("");
 
@@ -50,10 +52,11 @@ const App = () => {
           // console.log("audioQueue.current.length", audioQueue.current.length);
           // console.log("frameQueue.current.length", frameQueue.current.length);
           // console.log("audioStarted.current", audioStarted.current);
-          if (!audioStarted.current && audioQueue.current.length > 0) {
-            playAudioFromBuffer();
-            audioStarted.current = true; // Set the flag to true after starting the audio
-          }
+
+          // if (!audioStarted.current && audioQueue.current.length > 0) {
+          //   playAudioFromBuffer();
+          //   audioStarted.current = true; // Set the flag to true after starting the audio
+          // }
         };
         img.src = url;
         lastFrameTimeRef.current = now;
@@ -63,15 +66,15 @@ const App = () => {
   };
 
   // Convert Audio bytes
-  function uint8ToFloat32(uint8Array: Uint8Array): Float32Array {
-    const float32Array = new Float32Array(uint8Array.length / 2); // Assuming 16-bit PCM
-    for (let i = 0; i < uint8Array.length; i += 2) {
-      const int16Value = uint8Array[i] | (uint8Array[i + 1] << 8); // Combine two bytes into a 16-bit integer
-      const floatValue = int16Value / 32768.0; // Convert to float32
-      float32Array[i / 2] = floatValue;
+  const convertUint8ToFloat32 = (array: Uint8Array): Float32Array => {
+    const targetArray = new Float32Array(array.byteLength / 2);
+    const sourceDataView = new DataView(array.buffer);
+
+    for (let i = 0; i < targetArray.length; i++) {
+      targetArray[i] = sourceDataView.getInt16(i * 2, true) / 32768; // 2^15 = 32768
     }
-    return float32Array;
-  }
+    return targetArray;
+  };
 
   // Play Audio from Buffer
   const playAudioFromBuffer = async () => {
@@ -84,6 +87,10 @@ const App = () => {
     console.log("Audio Buffer Started");
     while (audioQueue.current.length > 0) {
       const segment = audioQueue.current.shift(); // Take the first available segment
+      if(segment===undefined)
+        {
+          continue;
+        }
       const audioBuffer = audioContext.current.createBuffer(
         1,
         segment.length,
@@ -158,10 +165,13 @@ const App = () => {
 
           // Extract Audio data
           const audioData = data.subarray(18 + endIndex);
+          console.log("diffAudio2", audioData);
+          audioStreamed.current.push(audioData);
           console.log("Audio data length:", audioData.byteLength);
 
           // Convert the audio data to Float32Array and play it
-          audioQueue.current.push(uint8ToFloat32(audioData));
+          // audioQueue.current.push(convertUint8ToFloat32(audioData));
+          // playAudioFromBufferNow(convertUint8ToFloat32(audioData));
           console.log("AudioQueue:", audioQueue);
 
           // Pushing the frame data into a queue
@@ -190,14 +200,18 @@ const App = () => {
       // if (audio.some((value) => value !== 128)) {
       //   console.log("audio", audio);
       // }
-      // const audioData = convertUint8ToFloat32(audio);
-      // audioQueue.current.push(audioData);
-      // if (!audioStarted.current && audioQueue.current.length > 0) {
-      //     playAudioFromBuffer();
-      //     audioStarted.current = true;
-      // }
+      const audioData = convertUint8ToFloat32(audio);
+      audioQueue.current.push(audioData);
+      audioOriginal.current.push(audio);
+      if (!audioStarted.current && audioQueue.current.length > 0) {
+          playAudioFromBuffer();
+          audioStarted.current = true;
+      }
 
       if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+        if (audio.length !== 256) {
+          console.log("diffAudio1", audio);
+        }
         webSocket.send(audio);
         // const audioData = convertUint8ToFloat32(audio);
         // audioQueue.current.push(audioData);
@@ -300,6 +314,101 @@ const App = () => {
     }
   };
 
+  // Download
+  function writeWAV(audioData, sampleRate) {
+    const buffer = new ArrayBuffer(44 + audioData.length * 2);
+    const view = new DataView(buffer);
+    // Write WAV header (RIFF header)
+    writeString(view, 0, "RIFF");
+    view.setUint32(4, 36 + audioData.length * 2, true);
+    writeString(view, 8, "WAVE");
+    // Write fmt subchunk
+    writeString(view, 12, "fmt ");
+    view.setUint32(16, 16, true); // Subchunk1Size (16 for PCM)
+    view.setUint16(20, 1, true); // AudioFormat (1 is PCM)
+    view.setUint16(22, 1, true); // NumChannels
+    view.setUint32(24, sampleRate, true); // SampleRate
+    view.setUint32(28, sampleRate * 2, true); // ByteRate
+    view.setUint16(32, 2, true); // BlockAlign
+    view.setUint16(34, 16, true); // BitsPerSample
+    // Write data subchunk
+    writeString(view, 36, "data");
+    view.setUint32(40, audioData.length * 2, true);
+    // Write the audio data
+    let offset = 44;
+    for (let i = 0; i < audioData.length; i++, offset += 2) {
+      const s = Math.max(-1, Math.min(1, audioData[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return new Blob([view], { type: "audio/wav" });
+    function writeString(view, offset, string) {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    }
+  }
+  const handleDownloadAudio = () => {
+    if (audioQueue.current.length > 0) {
+      // First calculate the total length of even indexed segments
+      let totalLength = 0;
+      audioQueue.current.forEach((segment, index) => {
+        if (index % 2 === 0) {
+          // Only count even indexed segments
+          totalLength += segment.length;
+        }
+      });
+      const combinedData = new Float32Array(totalLength);
+      let offset = 0;
+      console.log("Queue Length:", audioQueue.current.length);
+      audioQueue.current.forEach((segment, index) => {
+        if (index % 2 === 0) {
+          // Only process even indexed segments
+          console.log(`Segment ${index}: Length = ${segment.length}`);
+          combinedData.set(segment, offset);
+          offset += segment.length;
+        }
+      });
+      console.log("sample rate", audioContext.current.sampleRate);
+      const blob = writeWAV(combinedData, 16000);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "output.wav";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  function handleDownloadAudioFiles() {  
+    // Convert audio data arrays to strings
+    const originalDataString = JSON.stringify(audioOriginal.current);
+    const streamedDataString = JSON.stringify(audioStreamed.current);
+  
+    // Create Blob objects containing the data
+    const originalBlob = new Blob([originalDataString], { type: 'text/plain' });
+    const streamedBlob = new Blob([streamedDataString], { type: 'text/plain' });
+  
+    // Generate unique filenames based on timestamps
+    const timestamp = Date.now();
+    const originalFilename = `audio_original_${timestamp}.txt`;
+    const streamedFilename = `audio_streamed_${timestamp}.txt`;
+  
+    // Create link elements to download the Blobs as files
+    const originalLink = document.createElement('a');
+    originalLink.href = URL.createObjectURL(originalBlob);
+    originalLink.download = originalFilename;
+  
+    const streamedLink = document.createElement('a');
+    streamedLink.href = URL.createObjectURL(streamedBlob);
+    streamedLink.download = streamedFilename;
+  
+    // Simulate clicks to trigger the downloads
+    originalLink.click();
+    streamedLink.click();
+  }
+
   return (
     <div className="App">
       <header className="App-header">
@@ -307,6 +416,8 @@ const App = () => {
           {isCalling ? "Stop" : "Start"}
         </button>
         <button onClick={handlePlayButtonClick}>Play Audio</button>
+        <button onClick={handleDownloadAudio}>Download Audio</button>
+        <button onClick={handleDownloadAudioFiles}>Download Audio Files</button>
         <canvas
           ref={canvasRef}
           width="512"
