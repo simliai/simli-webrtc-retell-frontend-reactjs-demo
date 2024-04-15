@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import "./App.css";
-import { RetellWebClient } from "retell-client-js-sdk";
+import { RetellWebClient } from "./retell-client-js-sdk";
 
-const agentId = "YOUR_AGENT_ID";
+const agentId = "a3cfb6d7264592344634753c976bb05c";
 
 interface RegisterCallResponse {
   callId?: string;
@@ -22,7 +22,7 @@ const App = () => {
     });
 
     webClient.on("audio", (audio: Uint8Array) => {
-      console.log("There is audio");
+      console.log("There is audio", audio.toString());
     });
 
     webClient.on("conversationEnded", ({ code, reason }) => {
