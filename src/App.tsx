@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import "./App.css";
-import { RetellWebClient } from "./simli-retell-client-js-sdk";
+import { RetellWebClient } from "./simli-retell-client-js-sdk/dist";
 
 const agentId = "a3cfb6d7264592344634753c976bb05c";
 
@@ -14,11 +14,14 @@ const webClient = new RetellWebClient();
 const App = () => {
   const [isCalling, setIsCalling] = useState(false);
   const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const frameQueue = useRef([]);
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const frameQueue = useRef<any>([]);
+  const requestRef = useRef<number>();
+
   const audioQueue = useRef<Float32Array[]>([]);
   const audioContext = useRef(new AudioContext());
-  const requestRef = useRef();
+  
   const lastFrameTimeRef = useRef(performance.now());
   const audioStarted = useRef(false);
   const firstFrameReceived = useRef(false);
@@ -27,6 +30,9 @@ const App = () => {
 
   const [updateMessage, setUpdateMessage] = useState("");
 
+  /*
+  Render frames from the frame queue
+  */
   const processFrameQueue = () => {
     const now = performance.now();
     const timeSinceLastFrame = now - lastFrameTimeRef.current;
@@ -42,21 +48,13 @@ const App = () => {
         const img = new Image();
         img.onload = () => {
           const canvas = canvasRef.current;
-          const ctx = canvas.getContext("2d");
-          canvas.width = frameWidth;
-          canvas.height = frameHeight;
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          if (canvas) {
+            const ctx = canvas.getContext("2d");
+            canvas.width = frameWidth;
+            canvas.height = frameHeight;
+            ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+          }
           URL.revokeObjectURL(url);
-
-          // Check if audio has started or not
-          // console.log("audioQueue.current.length", audioQueue.current.length);
-          // console.log("frameQueue.current.length", frameQueue.current.length);
-          // console.log("audioStarted.current", audioStarted.current);
-
-          // if (!audioStarted.current && audioQueue.current.length > 0) {
-          //   playAudioFromBuffer();
-          //   audioStarted.current = true; // Set the flag to true after starting the audio
-          // }
         };
         img.src = url;
         lastFrameTimeRef.current = now;
@@ -65,7 +63,9 @@ const App = () => {
     requestRef.current = requestAnimationFrame(processFrameQueue);
   };
 
-  // Convert Audio bytes
+  /*
+  Convert Uint8Array to Float32Array
+  */
   const convertUint8ToFloat32 = (array: Uint8Array): Float32Array => {
     const targetArray = new Float32Array(array.byteLength / 2);
     const sourceDataView = new DataView(array.buffer);
@@ -76,21 +76,22 @@ const App = () => {
     return targetArray;
   };
 
-  // Play Audio from Buffer
+  /*
+  Play audio from the audio queue
+  */
   const playAudioFromBuffer = async () => {
     // Wait until the first frame has been received
-    while (!firstFrameReceived.current) {
-      await new Promise((resolve) => setTimeout(resolve, 1)); // Wait for 100 ms before checking again
-    }
+    // while (!firstFrameReceived.current) {
+    //   await new Promise((resolve) => setTimeout(resolve, 1)); // Wait for 100 ms before checking again
+    // }
 
     // Begin or continue audio playback
-    console.log("Audio Buffer Started");
+    console.log("Playing Audio From Buffer");
     while (audioQueue.current.length > 0) {
       const segment = audioQueue.current.shift(); // Take the first available segment
-      if(segment===undefined)
-        {
-          continue;
-        }
+      if (segment === undefined) {
+        continue;
+      }
       const audioBuffer = audioContext.current.createBuffer(
         1,
         segment.length,
@@ -113,86 +114,20 @@ const App = () => {
     }
   };
 
+  /*
+  Initialize the web client and set up event listeners
+  */
   useEffect(() => {
+    // Initialize Retell web client
     webClient.on("conversationStarted", () => {
       console.log("conversationStarted");
-      const ws = new WebSocket("ws://34.91.9.107:8892/LipsyncStream");
-      ws.binaryType = "arraybuffer";
-
-      ws.onopen = () => {
-        console.log("WebSocket connection established.");
-        const metadata = {
-          video_reference_url:
-            "https://storage.googleapis.com/charactervideos/11c30c18-86c3-424e-bb29-9c6d1fd6003b/11c30c18-86c3-424e-bb29-9c6d1fd6003b.mp4",
-          face_det_results:
-            "https://storage.googleapis.com/charactervideos/11c30c18-86c3-424e-bb29-9c6d1fd6003b/11c30c18-86c3-424e-bb29-9c6d1fd6003b.pkl",
-          isSuperResolution: true,
-          isJPG: true,
-        };
-        ws.send(JSON.stringify(metadata));
-        setWebSocket(ws);
-      };
-
-      ws.onmessage = (event) => {
-        console.log("Received message:", event.data);
-        try {
-          const data = new Uint8Array(event.data);
-
-          // Extracting the endIndex from the message
-          const endIndex = new DataView(data.buffer.slice(5, 9)).getUint32(
-            0,
-            true
-          );
-          console.log("endIndex", endIndex);
-
-          // Extracting the video data
-          const video = data.buffer.slice(9, endIndex);
-
-          // Extracting frame metadata
-          const frameIndex = new DataView(
-            data.buffer.slice(0 + 9, 4 + 9)
-          ).getUint32(0, true);
-          const frameWidth = new DataView(
-            data.buffer.slice(4 + 9, 8 + 9)
-          ).getUint32(0, true);
-          const frameHeight = new DataView(
-            data.buffer.slice(8 + 9, 12 + 9)
-          ).getUint32(0, true);
-
-          // Extracting image data
-          const imageData = data.subarray(12 + 9, endIndex + 9);
-          console.log("Image data length:", imageData.byteLength);
-
-          // Extract Audio data
-          const audioData = data.subarray(18 + endIndex);
-          console.log("diffAudio2", audioData);
-          audioStreamed.current.push(audioData);
-          console.log("Audio data length:", audioData.byteLength);
-
-          // Convert the audio data to Float32Array and play it
-          // audioQueue.current.push(convertUint8ToFloat32(audioData));
-          // playAudioFromBufferNow(convertUint8ToFloat32(audioData));
-          console.log("AudioQueue:", audioQueue);
-
-          // Pushing the frame data into a queue
-          frameQueue.current.push({ frameWidth, frameHeight, imageData });
-
-          console.warn("");
-        } catch (e) {
-          console.error(e);
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error("WebSocket error:", error);
-      };
-
-      ws.onclose = () => {
-        console.log("WebSocket connection closed.");
-        setWebSocket(null);
-      };
+      setIsCalling(true);
+      const ws = initializeWebSocket();
+      setWebSocket(ws);
+      console.log("WebSocket");
     });
 
+    // Retell audio data ready
     webClient.on("audio", (audio: Uint8Array) => {
       console.log("Received audio data type:", audio.constructor.name); // Logs the type of the audio data
 
@@ -200,62 +135,137 @@ const App = () => {
       // if (audio.some((value) => value !== 128)) {
       //   console.log("audio", audio);
       // }
+
       const audioData = convertUint8ToFloat32(audio);
       audioQueue.current.push(audioData);
-      audioOriginal.current.push(audio);
-      if (!audioStarted.current && audioQueue.current.length > 0) {
-          playAudioFromBuffer();
-          audioStarted.current = true;
-      }
+
+      playAudioFromBuffer();
 
       if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-        if (audio.length !== 256) {
-          console.log("diffAudio1", audio);
-        }
         webSocket.send(audio);
-        // const audioData = convertUint8ToFloat32(audio);
-        // audioQueue.current.push(audioData);
-      } else {
-        // console.log("WebSocket not ready or closed.");
       }
     });
 
+    // Retell conversation ended
     webClient.on("conversationEnded", ({ code, reason }) => {
       console.log("Closed with code:", code, ", reason:", reason);
       setIsCalling(false);
       webSocket?.close();
     });
 
+    // Retell error
     webClient.on("error", (error) => {
       console.error("An error occurred:", error);
       setIsCalling(false);
     });
 
+    // Retell transcript update
     webClient.on("update", (update) => {
       setUpdateMessage(
         update.transcript[update.transcript.length - 1].role +
           ": " +
           update.transcript[update.transcript.length - 1].content
       );
-      // console.log("update:", update);
     });
 
+    // Animation update
     requestRef.current = requestAnimationFrame(processFrameQueue);
+  }, [webClient, webSocket]);
 
-    return () => {
-      if (webSocket) {
-        webSocket.close();
-      }
-      cancelAnimationFrame(requestRef.current);
+  /*
+  Initialize the WebSocket connection
+  */
+  function initializeWebSocket() {
+    const ws = new WebSocket("ws://34.91.9.107:8892/LipsyncStream");
+    ws.binaryType = "arraybuffer";
+
+    // WebSocket connection established
+    ws.onopen = () => {
+      console.log("WebSocket connection established.");
+      const metadata = {
+        video_reference_url:
+          "https://storage.googleapis.com/charactervideos/11c30c18-86c3-424e-bb29-9c6d1fd6003b/11c30c18-86c3-424e-bb29-9c6d1fd6003b.mp4",
+        face_det_results:
+          "https://storage.googleapis.com/charactervideos/11c30c18-86c3-424e-bb29-9c6d1fd6003b/11c30c18-86c3-424e-bb29-9c6d1fd6003b.pkl",
+        isSuperResolution: true,
+        isJPG: true,
+      };
+      ws.send(JSON.stringify(metadata));
+      setWebSocket(ws);
     };
-  }, [webSocket]);
 
-  // Start Conversation
+    // websocket message event
+    ws.onmessage = (event) => {
+      console.log("WebSocket Received message:", event.data);
+      try {
+        const data = new Uint8Array(event.data);
+
+        // Extracting the endIndex from the message
+        const endIndex = new DataView(data.buffer.slice(5, 9)).getUint32(
+          0,
+          true
+        );
+        console.log("endIndex", endIndex);
+
+        // Extracting the video data
+        const video = data.buffer.slice(9, endIndex);
+
+        // Extracting frame metadata
+        const frameIndex = new DataView(
+          data.buffer.slice(0 + 9, 4 + 9)
+        ).getUint32(0, true);
+        const frameWidth = new DataView(
+          data.buffer.slice(4 + 9, 8 + 9)
+        ).getUint32(0, true);
+        const frameHeight = new DataView(
+          data.buffer.slice(8 + 9, 12 + 9)
+        ).getUint32(0, true);
+
+        // Extracting image data
+        const imageData = data.subarray(12 + 9, endIndex + 9);
+        console.log("WebSocket Image data length:", imageData.byteLength);
+
+        // Extract Audio data
+        const audioData = data.subarray(18 + endIndex);
+        audioStreamed.current.push(audioData);
+        console.log("WebSocket Audio data length:", audioData.byteLength);
+
+        // Convert the audio data to Float32Array and play it
+        // audioQueue.current.push(convertUint8ToFloat32(audioData));
+        // playAudioFromBufferNow(convertUint8ToFloat32(audioData));
+
+        // Pushing the frame data into a queue
+        frameQueue.current.push({ frameWidth, frameHeight, imageData });
+
+        console.warn("");
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    // Error handling
+    ws.onerror = (error) => {
+      console.error("WebSocket error:", error);
+    };
+
+    // Close websocket connection
+    ws.onclose = () => {
+      console.log("WebSocket connection closed.");
+      setWebSocket(null);
+    };
+
+    return ws;
+  }
+
+  /*
+  Button to toggle conversation start or stop and refreh the page
+  */
   const toggleConversation = async () => {
     if (isCalling) {
       webClient.stopConversation();
       setIsCalling(false);
       webSocket?.close();
+      window.location.reload();
     } else {
       const registerCallResponse = await registerCall(agentId);
       if (registerCallResponse.callId) {
@@ -270,7 +280,9 @@ const App = () => {
     }
   };
 
-  // Start a retell call
+  /*
+  Start a retell call
+  */
   async function registerCall(agentId: string): Promise<RegisterCallResponse> {
     try {
       const response = await fetch(
@@ -295,129 +307,12 @@ const App = () => {
     }
   }
 
-  // Play Audio Buffer
-  const handlePlayButtonClick = () => {
-    if (audioContext.current.state !== "running") {
-      audioContext.current
-        .resume()
-        .then(() => {
-          console.log("AudioContext resumed successfully");
-          playAudioFromBuffer(); // Call the function to play audio after resuming context
-        })
-        .catch((error) => {
-          console.error("Error resuming AudioContext:", error);
-        });
-    } else {
-      playAudioFromBuffer();
-      audioStarted.current = true;
-      // If already running, play audio directly
-    }
-  };
-
-  // Download
-  function writeWAV(audioData, sampleRate) {
-    const buffer = new ArrayBuffer(44 + audioData.length * 2);
-    const view = new DataView(buffer);
-    // Write WAV header (RIFF header)
-    writeString(view, 0, "RIFF");
-    view.setUint32(4, 36 + audioData.length * 2, true);
-    writeString(view, 8, "WAVE");
-    // Write fmt subchunk
-    writeString(view, 12, "fmt ");
-    view.setUint32(16, 16, true); // Subchunk1Size (16 for PCM)
-    view.setUint16(20, 1, true); // AudioFormat (1 is PCM)
-    view.setUint16(22, 1, true); // NumChannels
-    view.setUint32(24, sampleRate, true); // SampleRate
-    view.setUint32(28, sampleRate * 2, true); // ByteRate
-    view.setUint16(32, 2, true); // BlockAlign
-    view.setUint16(34, 16, true); // BitsPerSample
-    // Write data subchunk
-    writeString(view, 36, "data");
-    view.setUint32(40, audioData.length * 2, true);
-    // Write the audio data
-    let offset = 44;
-    for (let i = 0; i < audioData.length; i++, offset += 2) {
-      const s = Math.max(-1, Math.min(1, audioData[i]));
-      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    }
-    return new Blob([view], { type: "audio/wav" });
-    function writeString(view, offset, string) {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    }
-  }
-  const handleDownloadAudio = () => {
-    if (audioQueue.current.length > 0) {
-      // First calculate the total length of even indexed segments
-      let totalLength = 0;
-      audioQueue.current.forEach((segment, index) => {
-        if (index % 2 === 0) {
-          // Only count even indexed segments
-          totalLength += segment.length;
-        }
-      });
-      const combinedData = new Float32Array(totalLength);
-      let offset = 0;
-      console.log("Queue Length:", audioQueue.current.length);
-      audioQueue.current.forEach((segment, index) => {
-        if (index % 2 === 0) {
-          // Only process even indexed segments
-          console.log(`Segment ${index}: Length = ${segment.length}`);
-          combinedData.set(segment, offset);
-          offset += segment.length;
-        }
-      });
-      console.log("sample rate", audioContext.current.sampleRate);
-      const blob = writeWAV(combinedData, 16000);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "output.wav";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    }
-  };
-
-  function handleDownloadAudioFiles() {  
-    // Convert audio data arrays to strings
-    const originalDataString = JSON.stringify(audioOriginal.current);
-    const streamedDataString = JSON.stringify(audioStreamed.current);
-  
-    // Create Blob objects containing the data
-    const originalBlob = new Blob([originalDataString], { type: 'text/plain' });
-    const streamedBlob = new Blob([streamedDataString], { type: 'text/plain' });
-  
-    // Generate unique filenames based on timestamps
-    const timestamp = Date.now();
-    const originalFilename = `audio_original_${timestamp}.txt`;
-    const streamedFilename = `audio_streamed_${timestamp}.txt`;
-  
-    // Create link elements to download the Blobs as files
-    const originalLink = document.createElement('a');
-    originalLink.href = URL.createObjectURL(originalBlob);
-    originalLink.download = originalFilename;
-  
-    const streamedLink = document.createElement('a');
-    streamedLink.href = URL.createObjectURL(streamedBlob);
-    streamedLink.download = streamedFilename;
-  
-    // Simulate clicks to trigger the downloads
-    originalLink.click();
-    streamedLink.click();
-  }
-
   return (
     <div className="App">
       <header className="App-header">
         <button onClick={toggleConversation}>
           {isCalling ? "Stop" : "Start"}
         </button>
-        <button onClick={handlePlayButtonClick}>Play Audio</button>
-        <button onClick={handleDownloadAudio}>Download Audio</button>
-        <button onClick={handleDownloadAudioFiles}>Download Audio Files</button>
         <canvas
           ref={canvasRef}
           width="512"
