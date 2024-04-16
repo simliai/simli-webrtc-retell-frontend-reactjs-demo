@@ -1,4 +1,3 @@
-/*
 import React, { useEffect, useRef, useState } from "react";
 import "./App.css";
 import { RetellWebClient } from "./simli-retell-client-js-sdk/dist";
@@ -433,4 +432,3 @@ const App = () => {
 };
 
 export default App;
-*/
