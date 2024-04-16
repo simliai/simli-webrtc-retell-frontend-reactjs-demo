@@ -21,9 +21,9 @@ const App = () => {
 
   const audioQueue = useRef<Float32Array[]>([]);
   const audioContext = useRef(new AudioContext());
-  
+  let audioStarted = false;
+
   const lastFrameTimeRef = useRef(performance.now());
-  const audioStarted = useRef(false);
   const firstFrameReceived = useRef(false);
   const audioOriginal = useRef<Uint8Array[]>([]);
   const audioStreamed = useRef<Uint8Array[]>([]);
@@ -84,6 +84,11 @@ const App = () => {
     // while (!firstFrameReceived.current) {
     //   await new Promise((resolve) => setTimeout(resolve, 1)); // Wait for 100 ms before checking again
     // }
+    if (audioStarted) {
+      return;
+    } else {
+      audioStarted = true;
+    }
 
     // Begin or continue audio playback
     console.log("Playing Audio From Buffer");
@@ -129,21 +134,24 @@ const App = () => {
 
     // Retell audio data ready
     webClient.on("audio", (audio: Uint8Array) => {
-      console.log("Received audio data type:", audio.constructor.name); // Logs the type of the audio data
 
       // if values of audio are not silence then log that
       // if (audio.some((value) => value !== 128)) {
       //   console.log("audio", audio);
       // }
+      if(audio.length > 256)
+      {
+        console.log("Received audio data type:", audio.length);
 
-      const audioData = convertUint8ToFloat32(audio);
-      audioQueue.current.push(audioData);
+        const audioData = convertUint8ToFloat32(audio);
+        audioQueue.current.push(audioData);
+        playAudioFromBuffer();
 
-      playAudioFromBuffer();
-
-      if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-        webSocket.send(audio);
+        if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+          webSocket.send(audio);
+        }
       }
+
     });
 
     // Retell conversation ended
