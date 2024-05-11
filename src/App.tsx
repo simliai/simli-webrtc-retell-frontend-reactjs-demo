@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import "./App.css";
-import { RetellWebClient } from "./simli-retell-client-js-sdk/dist";
+import { RetellWebClient } from "retell-client-js-sdk";
 
 const agentId = "a3cfb6d7264592344634753c976bb05c";
 
@@ -9,271 +9,403 @@ interface RegisterCallResponse {
   sampleRate: number;
 }
 
+interface ImageFrame {
+  frameWidth: number;
+  frameHeight: number;
+  imageData: Uint8Array;
+}
+
 const webClient = new RetellWebClient();
 
 const App = () => {
-  const [isCalling, setIsCalling] = useState(false);
-  const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
+  // ----------------- Simli -----------------
+  const [start, setStart] = useState(false); // Start button state
+  const [ws, setWs] = useState<WebSocket | null>(null); // WebSocket connection for audio data
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const frameQueue = useRef<any>([]);
-  const requestRef = useRef<number>();
+  // Minimum chunk size for decoding,
+  // Higher chunk size will result in longer delay but smoother playback
+  // ( 1 chunk = 0.033 seconds )
+  // ( 30 chunks = 0.99 seconds )
+  const minimumChunkSize = useRef<number>(15);
+  const [minimumChunkSizeState, setMinimumChunkSizeState] = useState<number>(
+    minimumChunkSize.current
+  );
 
-  const audioQueue = useRef<Float32Array[]>([]);
-  const audioContext = useRef(new AudioContext());
-  let audioStarted = false;
+  const startTime = useRef<any>();
+  const executionTime = useRef<any>();
+  const [chunkCollectionTime, setChunkCollectionTime] = useState<number>(0);
+  const currentChunkSize = useRef<number>(0); // Current chunk size for decoding
 
-  const lastFrameTimeRef = useRef(performance.now());
-  const firstFrameReceived = useRef(false);
-  const audioOriginal = useRef<Uint8Array[]>([]);
-  const audioStreamed = useRef<Uint8Array[]>([]);
+  const startTimeFirstByte = useRef<any>(null);
+  const timeTillFirstByte = useRef<any>(null);
+  const [timeTillFirstByteState, setTimeTillFirstByteState] =
+    useState<number>(0);
 
-  const [updateMessage, setUpdateMessage] = useState("");
+  // ------------------- AUDIO -------------------
+  const [audioContext, setAudioContext] = useState<AudioContext | null>(null); // AudioContest for decoding audio data
+  const audioQueue = useRef<Array<AudioBuffer>>([]); // Ref for audio queue
+  const [audioQueueLengthState, setAudioQueueLengthState] = useState<number>(0); // State for audio queue length
+  const [playing, setPlaying] = useState(false); // State of playing audio
+  const accumulatedAudioBuffer = useRef<Array<Uint8Array>>([]); // Buffer for accumulating incoming data until it reaches the minimum size for decoding
 
-  /*
-  Render frames from the frame queue
-  */
-  const processFrameQueue = () => {
-    const now = performance.now();
-    const timeSinceLastFrame = now - lastFrameTimeRef.current;
-    const msPerFrame = 1000 / 30; // Approximately 33.33 milliseconds per frame
+  const audioConstant = 0.042; // Audio constant for audio playback to tweak chunking
+  const playbackDelay =
+    minimumChunkSize.current * (1000 / 30) +
+    minimumChunkSize.current * audioConstant; // Playback delay for audio and video in milliseconds
 
-    if (timeSinceLastFrame >= msPerFrame) {
-      if (frameQueue.current.length > 0) {
-        firstFrameReceived.current = true;
-        const { frameWidth, frameHeight, imageData } =
-          frameQueue.current.shift();
-        const blob = new Blob([imageData], { type: "image/jpeg" });
-        const url = URL.createObjectURL(blob);
-        const img = new Image();
-        img.onload = () => {
-          const canvas = canvasRef.current;
-          if (canvas) {
-            const ctx = canvas.getContext("2d");
-            canvas.width = frameWidth;
-            canvas.height = frameHeight;
-            ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-          }
-          URL.revokeObjectURL(url);
-        };
-        img.src = url;
-        lastFrameTimeRef.current = now;
-      }
-    }
-    requestRef.current = requestAnimationFrame(processFrameQueue);
-  };
+  // ------------------- VIDEO -------------------
+  const frameQueue = useRef<Array<Array<ImageFrame>>>([]); // Queue for storing video data
+  const [frameQueueLengthState, setFrameQueueLengthState] = useState<number>(0); // State for frame queue length
+  const accumulatedFrameBuffer = useRef<Array<ImageFrame>>([]); // Buffer for accumulating incoming video data
+  const currentFrameBuffer = useRef<Array<ImageFrame>>([]); // Buffer for accumulating incoming video data
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [videoContext, setVideoContext] =
+    useState<CanvasRenderingContext2D | null>(null);
+  const currentFrame = useRef(0);
+  const fps = 30;
+  // const frameInterval = 1000 / fps; // Calculate the time between frames in milliseconds
+  const frameInterval = 30; // Time between frames in milliseconds (30 seems to work nice)
 
-  /*
-  Convert Uint8Array to Float32Array
-  */
-  const convertUint8ToFloat32 = (array: Uint8Array): Float32Array => {
-    const targetArray = new Float32Array(array.byteLength / 2);
-    const sourceDataView = new DataView(array.buffer);
-
-    for (let i = 0; i < targetArray.length; i++) {
-      targetArray[i] = sourceDataView.getInt16(i * 2, true) / 32768; // 2^15 = 32768
-    }
-    return targetArray;
-  };
-
-  /*
-  Play audio from the audio queue
-  */
-  const playAudioFromBuffer = async () => {
-    // Wait until the first frame has been received
-    // while (!firstFrameReceived.current) {
-    //   await new Promise((resolve) => setTimeout(resolve, 1)); // Wait for 100 ms before checking again
-    // }
-    if (audioStarted) {
-      return;
-    } else {
-      audioStarted = true;
-    }
-
-    // Begin or continue audio playback
-    console.log("Playing Audio From Buffer");
-    while (audioQueue.current.length > 0) {
-      const segment = audioQueue.current.shift(); // Take the first available segment
-      if (segment === undefined) {
-        continue;
-      }
-      const audioBuffer = audioContext.current.createBuffer(
-        1,
-        segment.length,
-        16000
-      );
-      audioBuffer.getChannelData(0).set(segment);
-
-      const source = audioContext.current.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioContext.current.destination);
-      source.start();
-
-      // Optional: Handle the end of playback to trigger additional actions
-      source.onended = () => {
-        console.log("Audio Segment Finished");
-      };
-
-      // Wait until this segment finishes before starting the next
-      await new Promise((resolve) => (source.onended = resolve));
-    }
-  };
-
-  /*
-  Initialize the web client and set up event listeners
-  */
+  /* Main loop */
   useEffect(() => {
-    // Initialize Retell web client
-    webClient.on("conversationStarted", () => {
-      console.log("conversationStarted");
-      setIsCalling(true);
-      const ws = initializeWebSocket();
-      setWebSocket(ws);
-      console.log("WebSocket");
-    });
-
-    // Retell audio data ready
-    webClient.on("audio", (audio: Uint8Array) => {
-
-      // if values of audio are not silence then log that
-      // if (audio.some((value) => value !== 128)) {
-      //   console.log("audio", audio);
-      // }
-      if(audio.length > 256)
-      {
-        console.log("Received audio data type:", audio.length);
-
-        const audioData = convertUint8ToFloat32(audio);
-        audioQueue.current.push(audioData);
-        playAudioFromBuffer();
-
-        if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-          webSocket.send(audio);
-        }
+    const intervalId = setInterval(() => {
+      if (start && audioQueue.current.length > 0) {
+        playFrameQueue();
+        playAudioQueue();
       }
+    }, playbackDelay);
 
-    });
+    return () => clearInterval(intervalId);
+  }, [audioContext]);
 
-    // Retell conversation ended
-    webClient.on("conversationEnded", ({ code, reason }) => {
-      console.log("Closed with code:", code, ", reason:", reason);
-      setIsCalling(false);
-      webSocket?.close();
-    });
+  /* Create AudioContext at the start */
+  useEffect(() => {
+    // Return if start is false
+    if (start === false) return;
 
-    // Retell error
-    webClient.on("error", (error) => {
-      console.error("An error occurred:", error);
-      setIsCalling(false);
-    });
+    // Initialize AudioContext
+    const newAudioContext = new AudioContext();
+    setAudioContext(newAudioContext);
 
-    // Retell transcript update
-    webClient.on("update", (update) => {
-      setUpdateMessage(
-        update.transcript[update.transcript.length - 1].role +
-          ": " +
-          update.transcript[update.transcript.length - 1].content
-      );
-    });
+    // Intialize VideoContext
+    const videoCanvas = canvasRef.current;
+    if (videoCanvas) {
+      setVideoContext(videoCanvas?.getContext("2d"));
+    }
+  }, [start]);
 
-    // Animation update
-    requestRef.current = requestAnimationFrame(processFrameQueue);
-  }, [webClient, webSocket]);
+  /* Connect with Lipsync stream */
+  useEffect(() => {
+    // Return if start is false
+    if (start === false) return;
 
-  /*
-  Initialize the WebSocket connection
-  */
-  function initializeWebSocket() {
-    const ws = new WebSocket("ws://34.91.9.107:8892/LipsyncStream");
-    ws.binaryType = "arraybuffer";
+    const ws_lipsync = new WebSocket("ws://api.simli.ai/LipsyncStream");
+    ws_lipsync.binaryType = "arraybuffer";
+    setWs(ws_lipsync);
 
-    // WebSocket connection established
-    ws.onopen = () => {
-      console.log("WebSocket connection established.");
+    ws_lipsync.onopen = () => {
+      console.log("Connected to lipsync server");
+
       const metadata = {
         video_reference_url:
-          "https://storage.googleapis.com/charactervideos/11c30c18-86c3-424e-bb29-9c6d1fd6003b/11c30c18-86c3-424e-bb29-9c6d1fd6003b.mp4",
+          "https://storage.googleapis.com/charactervideos/5514e24d-6086-46a3-ace4-6a7264e5cb7c/5514e24d-6086-46a3-ace4-6a7264e5cb7c.mp4",
         face_det_results:
-          "https://storage.googleapis.com/charactervideos/11c30c18-86c3-424e-bb29-9c6d1fd6003b/11c30c18-86c3-424e-bb29-9c6d1fd6003b.pkl",
+          "https://storage.googleapis.com/charactervideos/5514e24d-6086-46a3-ace4-6a7264e5cb7c/5514e24d-6086-46a3-ace4-6a7264e5cb7c.pkl",
         isSuperResolution: true,
         isJPG: true,
+        syncAudio: true,
       };
-      ws.send(JSON.stringify(metadata));
-      setWebSocket(ws);
+      ws_lipsync.send(JSON.stringify(metadata));
     };
 
-    // websocket message event
-    ws.onmessage = (event) => {
-      console.log("WebSocket Received message:", event.data);
-      try {
-        const data = new Uint8Array(event.data);
+    ws_lipsync.onmessage = (event) => {
+      timeTillFirstByte.current =
+        performance.now() - startTimeFirstByte.current;
+      setTimeTillFirstByteState(timeTillFirstByte.current);
 
-        // Extracting the endIndex from the message
-        const endIndex = new DataView(data.buffer.slice(5, 9)).getUint32(
-          0,
-          true
-        );
-        console.log("endIndex", endIndex);
-
-        // Extracting the video data
-        const video = data.buffer.slice(9, endIndex);
-
-        // Extracting frame metadata
-        const frameIndex = new DataView(
-          data.buffer.slice(0 + 9, 4 + 9)
-        ).getUint32(0, true);
-        const frameWidth = new DataView(
-          data.buffer.slice(4 + 9, 8 + 9)
-        ).getUint32(0, true);
-        const frameHeight = new DataView(
-          data.buffer.slice(8 + 9, 12 + 9)
-        ).getUint32(0, true);
-
-        // Extracting image data
-        const imageData = data.subarray(12 + 9, endIndex + 9);
-        console.log("WebSocket Image data length:", imageData.byteLength);
-
-        // Extract Audio data
-        const audioData = data.subarray(18 + endIndex);
-        audioStreamed.current.push(audioData);
-        console.log("WebSocket Audio data length:", audioData.byteLength);
-
-        // Convert the audio data to Float32Array and play it
-        // audioQueue.current.push(convertUint8ToFloat32(audioData));
-        // playAudioFromBufferNow(convertUint8ToFloat32(audioData));
-
-        // Pushing the frame data into a queue
-        frameQueue.current.push({ frameWidth, frameHeight, imageData });
-
-        console.warn("");
-      } catch (e) {
-        console.error(e);
+      if (startTime.current === null) {
+        startTime.current = performance.now();
       }
+
+      // console.log("Received data arraybuffer from lipsync server:", event.data);
+      processToVideoAudio(event.data);
+
+      currentChunkSize.current += 1; // Increment chunk size by 1
+
+      return () => {
+        if (ws) {
+          console.error("Closing Lipsync WebSocket");
+          ws.close();
+        }
+      };
     };
 
-    // Error handling
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
+    return () => {
+      console.error("Closing Lipsync WebSocket");
+      ws_lipsync.close();
     };
+  }, [audioContext]);
 
-    // Close websocket connection
-    ws.onclose = () => {
-      console.log("WebSocket connection closed.");
-      setWebSocket(null);
-    };
-
-    return ws;
+  async function playback() {
+    while (audioQueue.current.length > 0) {
+      playFrameQueue();
+      const playbackDuration = await playAudioQueue();
+      await new Promise((resolve) =>
+        setTimeout(resolve, minimumChunkSize.current * (1000 / 30))
+      );
+    }
   }
 
-  /*
-  Button to toggle conversation start or stop and refreh the page
-  */
+  /* Process Data Bytes to Audio and Video */
+  const processToVideoAudio = async (dataArrayBuffer: ArrayBuffer) => {
+    let data = new Uint8Array(dataArrayBuffer);
+
+    // Extracting the endIndex from the message
+    const endIndex = new DataView(data.buffer.slice(5, 9)).getUint32(0, true);
+
+    // --------------- VIDEO DATA ----------------
+
+    // Print first 5 bytes of the message as string
+    const videoMessage = new TextDecoder().decode(data.slice(0, 5));
+
+    // Extracting frame metadata
+    const frameIndex = new DataView(data.buffer.slice(0 + 9, 4 + 9)).getUint32(
+      0,
+      true
+    );
+    const frameWidth = new DataView(data.buffer.slice(4 + 9, 8 + 9)).getUint32(
+      0,
+      true
+    );
+    const frameHeight = new DataView(
+      data.buffer.slice(8 + 9, 12 + 9)
+    ).getUint32(0, true);
+    const imageData = data.subarray(12 + 9, endIndex + 9); // The rest is image data
+
+    // Push image data to frame queue
+    const imageFrame: ImageFrame = { frameWidth, frameHeight, imageData };
+    updateFrameQueue(imageFrame);
+    setFrameQueueLengthState(frameQueue.current.length);
+
+    // --------------- AUDIO DATA ----------------
+
+    const audioMessage = new TextDecoder().decode(
+      data.slice(endIndex + 9, endIndex + 14)
+    );
+
+    // Extract Audio data
+    const audioData = data.subarray(endIndex + 18);
+
+    // Push audio data to audio queue
+    updateAudioQueue(audioData);
+    setAudioQueueLengthState(audioQueue.current.length);
+
+    console.log("Received chunk from Lipsync");
+
+    // --------------- LOGGING ----------------
+
+    // Log Everything
+    // console.log(
+    //   `${videoMessage}: ${imageData.byteLength}\n` +
+    //     `${audioMessage}: ${audioData.byteLength}\n` +
+    //     `endIndex: ${endIndex}`
+    // );
+    // console.warn("");
+  };
+
+  /* Play video frames queue */
+  const playFrameQueue = async () => {
+    currentFrameBuffer.current = frameQueue.current.shift();
+
+    const drawFrame = async () => {
+      if (currentFrame.current >= currentFrameBuffer.current.length) {
+        currentFrame.current = 0;
+        return;
+      }
+
+      const arrayBuffer =
+        currentFrameBuffer.current[currentFrame.current].imageData;
+      const width = currentFrameBuffer.current[currentFrame.current].frameWidth;
+      const height =
+        currentFrameBuffer.current[currentFrame.current].frameHeight;
+
+      const blob = new Blob([arrayBuffer]); // Convert ArrayBuffer to Blob
+      const url = URL.createObjectURL(blob);
+
+      const image = new Image();
+      image.onload = () => {
+        videoContext?.clearRect(0, 0, width, height);
+        videoContext?.drawImage(image, 0, 0, width, height);
+        URL.revokeObjectURL(url); // Clean up memory after drawing the image
+      };
+      image.src = url;
+
+      currentFrame.current++;
+      setTimeout(drawFrame, frameInterval); // Set the next frame draw
+    };
+
+    await drawFrame();
+  };
+
+  /* Update video queue */
+  const updateFrameQueue = async (imageFrame: ImageFrame) => {
+    if (currentChunkSize.current >= minimumChunkSize.current) {
+      frameQueue.current.push(accumulatedFrameBuffer.current);
+      accumulatedFrameBuffer.current = [];
+    } else {
+      accumulatedFrameBuffer.current.push(imageFrame);
+    }
+  };
+
+  /* Decode ArrayBuffer data to Audio and push to audio queue */
+  const updateAudioQueue = async (data: ArrayBuffer) => {
+    if (currentChunkSize.current >= minimumChunkSize.current) {
+      console.log("--------- CHUNK SIZE REACHED", currentChunkSize);
+
+      // 1: Concatenate Uint8Arrays into a single Uint8Array
+      const accumulatedAudioBufferTotalByteLength =
+        accumulatedAudioBuffer.current.reduce(
+          (total, array) => total + array.byteLength,
+          0
+        );
+      const concatenatedData = new Uint8Array(
+        accumulatedAudioBufferTotalByteLength
+      );
+      let offset = 0;
+      for (const array of accumulatedAudioBuffer.current) {
+        concatenatedData.set(array, offset);
+        offset += array.byteLength;
+      }
+
+      // 2: Reset accumulated data buffer
+      accumulatedAudioBuffer.current = [];
+
+      // 3: Decode concatenated data as PCM16 audio
+      const decodedAudioData = await createAudioBufferFromPCM16(
+        concatenatedData
+      );
+
+      // 4: Push decoded audio data to the queue
+      audioQueue.current.push(decodedAudioData);
+
+      currentChunkSize.current = 0; // Reset chunk size
+    } else {
+      // Else: Accumulate received data
+      if (!accumulatedAudioBuffer.current) {
+        accumulatedAudioBuffer.current = [new Uint8Array(data)];
+      } else {
+        accumulatedAudioBuffer.current.push(new Uint8Array(data));
+      }
+    }
+  };
+
+  /* Helper function to decode ArrayBuffer as PCM16 */
+  async function createAudioBufferFromPCM16(
+    input: Uint8Array
+  ): Promise<AudioBuffer> {
+    // Ensure the input byte length is even
+    if (input.length % 2 !== 0) throw new Error("Input length must be even");
+
+    const numSamples = input.length / 2;
+    const audioBuffer = audioContext!.createBuffer(1, numSamples, 16000);
+    const channelData = audioBuffer.getChannelData(0);
+
+    for (let i = 0, j = 0; i < input.length; i += 2, j++) {
+      // Little-endian byte order
+      let int16 = (input[i + 1] << 8) | input[i];
+      // Convert from uint16 to int16
+      if (int16 >= 0x8000) int16 |= ~0xffff;
+      // Normalize to range -1.0 to 1.0
+      channelData[j] = int16 / 32768.0;
+    }
+
+    return audioBuffer;
+  }
+
+  /* Play audio in the queue */
+  async function playAudioQueue(): Promise<number> {
+    const audioBuffer = audioQueue.current.shift();
+    if (!audioBuffer) return 0;
+    const source = audioContext!.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioContext!.destination);
+
+    executionTime.current = performance.now() - startTime.current;
+    setChunkCollectionTime(executionTime.current);
+    console.log(
+      "Chunk collection time:",
+      executionTime.current / 1000,
+      "seconds"
+    );
+    startTime.current = null;
+    executionTime.current = 0;
+
+    // Start playback
+    source.start(0);
+
+    console.log(
+      `Playing audio: AudioDuration: ${audioBuffer!.duration.toFixed(2)}`
+    );
+
+    // Return back audio duration
+    return audioBuffer!.duration;
+  }
+
+  const handlePauseAudio = () => {
+    setPlaying(false);
+  };
+
+  const handleResumeAudio = () => {
+    setPlaying(true);
+  };
+
+  const handleMinimumChunkSizeChange = (event: any) => {
+    setPlaying(false);
+    minimumChunkSize.current = parseInt(event.target.value);
+    setMinimumChunkSizeState(minimumChunkSize.current);
+  };
+
+  // ----------------- Retell -----------------
+
+  // Initialize the SDK
+  useEffect(() => {
+    // Setup event listeners
+    webClient.on("conversationStarted", () => {
+      console.log("conversationStarted");
+    });
+
+    webClient.on("audio", (audio: Uint8Array) => {
+      console.log("There is audio");
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(audio);
+        startTimeFirstByte.current = performance.now(); // Start time for first byte
+
+        // Send zeros to lipsync server for silence
+        // const zeroData = new Uint8Array(256);
+        // ws.send(zeroData.buffer);
+      }
+    });
+
+    webClient.on("conversationEnded", ({ code, reason }) => {
+      console.log("Closed with code:", code, ", reason:", reason);
+      setStart(false); // Update button to "Start" when conversation ends
+    });
+
+    webClient.on("error", (error) => {
+      console.error("An error occurred:", error);
+      setStart(false); // Update button to "Start" in case of error
+    });
+
+    webClient.on("update", (update) => {
+      // Print live transcript as needed
+      console.log("update", update);
+    });
+  }, [audioContext, ws]);
+
   const toggleConversation = async () => {
-    if (isCalling) {
+    if (start) {
       webClient.stopConversation();
-      setIsCalling(false);
-      webSocket?.close();
-      window.location.reload();
     } else {
       const registerCallResponse = await registerCall(agentId);
       if (registerCallResponse.callId) {
@@ -284,15 +416,14 @@ const App = () => {
             enableUpdate: true,
           })
           .catch(console.error);
+        setStart(true); // Update button to "Stop" when conversation starts
       }
     }
   };
 
-  /*
-  Start a retell call
-  */
   async function registerCall(agentId: string): Promise<RegisterCallResponse> {
     try {
+      // Replace with your server url
       const response = await fetch(
         "http://localhost:8080/register-call-on-your-server",
         {
@@ -300,7 +431,9 @@ const App = () => {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ agentId }),
+          body: JSON.stringify({
+            agentId: agentId,
+          }),
         }
       );
 
@@ -308,27 +441,26 @@ const App = () => {
         throw new Error(`Error: ${response.status}`);
       }
 
-      return await response.json();
+      const data: RegisterCallResponse = await response.json();
+      return data;
     } catch (err) {
-      console.error(err);
-      throw new Error(err.toString());
+      console.log(err);
+      throw new Error(err);
     }
   }
 
   return (
     <div className="App">
       <header className="App-header">
-        <button onClick={toggleConversation}>
-          {isCalling ? "Stop" : "Start"}
-        </button>
         <canvas
           ref={canvasRef}
           width="512"
           height="512"
           style={{ border: "1px solid black" }}
         ></canvas>
-        <b>{}</b>
-        <p>{updateMessage}</p>
+        <button onClick={toggleConversation} className="StartButton">
+          {start ? "Stop" : "Start"}
+        </button>
       </header>
     </div>
   );

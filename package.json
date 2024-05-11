@@ -13,7 +13,8 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
-    "retell-sdk": "^3.5.0",
+    "retell-client-js-sdk": "^1.3.3",
+    "retell-sdk": "^3.12.0",
     "stream": "^0.0.2"
   },
   "devDependencies": {

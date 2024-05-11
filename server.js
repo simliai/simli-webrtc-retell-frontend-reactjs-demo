@@ -9,7 +9,7 @@ const port = 8080;
 app.use(cors()); // Enable CORS for all routes
 app.use(bodyParser.json());
 
-const retell = new Retell({apiKey:"KEY"});
+const retell = new Retell({apiKey:"API-KEY"});
 
 app.post('/register-call-on-your-server', async (req, res) => {
   try {

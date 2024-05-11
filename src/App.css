@@ -14,7 +14,7 @@
 }
 
 .App-header {
-  background-color: #282c34;
+  background-color: #000000;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -26,6 +26,21 @@
 
 .App-link {
   color: #61dafb;
+}
+
+.StartButton {
+  background-color: #ffffff;
+  color: #000000;
+  font-size: 16px;
+  padding: 8px 32px;
+  border-radius: 10px;
+  outline: none;
+  cursor: pointer;
+  margin-top: 20px;
+}
+
+.StartButton:hover {
+  opacity: 80%;
 }
 
 @keyframes App-logo-spin {
