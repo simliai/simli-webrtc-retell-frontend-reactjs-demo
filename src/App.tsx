@@ -1,8 +1,8 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import "./App.css";
+// import { RetellWebClient } from "retell-client-js-sdk";
+import { RetellWebClient } from "simli-retell-client-js-sdk";
 import SimliFaceStream from "./SimliFaceStream.tsx";
-import { RetellWebClient } from "retell-client-js-sdk";
-// import { RetellWebClient } from "./simli-retell-client-js-sdk";
 
 const agentId = "bca2843166dd248fd687beede0feb27d";
 
@@ -14,8 +14,9 @@ interface RegisterCallResponse {
 const webClient = new RetellWebClient();
 
 const App = () => {
-  const [start, setStart] = useState(false);
-  const simliFaceStreamRef = useRef(null);
+  const [isCalling, setIsCalling] = useState(false);
+
+  const simliFaceStreamRef = React.useRef(null);
 
   // Initialize the SDK
   useEffect(() => {
@@ -25,6 +26,8 @@ const App = () => {
     });
 
     webClient.on("audio", (audio: Uint8Array) => {
+      console.log("There is audio");
+      // Send audio to the SimliFaceStream component
       if (simliFaceStreamRef.current) {
         simliFaceStreamRef.current.sendAudioDataToLipsync(audio);
       }
@@ -32,22 +35,25 @@ const App = () => {
 
     webClient.on("conversationEnded", ({ code, reason }) => {
       console.log("Closed with code:", code, ", reason:", reason);
-      setStart(false); // Update button to "Start" when conversation ends
+      setIsCalling(false); // Update button to "Start" when conversation ends
     });
 
     webClient.on("error", (error) => {
       console.error("An error occurred:", error);
-      setStart(false); // Update button to "Start" in case of error
+      setIsCalling(false); // Update button to "Start" in case of error
     });
 
     webClient.on("update", (update) => {
       // Print live transcript as needed
       console.log("update", update);
+      if (update.turntaking === "user_turn") {
+      } else if (update.turntaking === "agent_turn") {
+      }
     });
   }, []);
 
   const toggleConversation = async () => {
-    if (start) {
+    if (isCalling) {
       webClient.stopConversation();
     } else {
       const registerCallResponse = await registerCall(agentId);
@@ -59,7 +65,7 @@ const App = () => {
             enableUpdate: true,
           })
           .catch(console.error);
-        setStart(true); // Update button to "Stop" when conversation starts
+        setIsCalling(true); // Update button to "Stop" when conversation starts
       }
     }
   };
@@ -95,9 +101,13 @@ const App = () => {
   return (
     <div className="App">
       <header className="App-header">
-        <SimliFaceStream ref={simliFaceStreamRef} start={start}/>
-        <button onClick={toggleConversation} className="StartButton">
-          {start ? "Stop" : "Start"}
+        <SimliFaceStream
+          ref={simliFaceStreamRef}
+          start={isCalling}
+          minimumChunkSize={15}
+        />
+        <button onClick={toggleConversation}>
+          {isCalling ? "Stop" : "Start"}
         </button>
       </header>
     </div>
