@@ -14,6 +14,7 @@ const webClient = new RetellWebClient();
 
 const App = () => {
   const [isCalling, setIsCalling] = useState(false);
+  const [minimumChunkSize, setMinimumChunkSize] = useState(10);
   const simliFaceStreamRef = useRef(null);
   const lastAudioTimeRef = useRef(Date.now());
 
@@ -23,11 +24,15 @@ const App = () => {
       simliFaceStreamRef.current?.sendAudioDataToLipsync(silence);
     };
 
+    const intervalDelay = 33 * minimumChunkSize; // ms
+
     const intervalId = setInterval(() => {
-      if (Date.now() - lastAudioTimeRef.current >= 33) {
-        sendSilentAudio();
+      if (Date.now() - lastAudioTimeRef.current >= intervalDelay) {
+        for (let i = 0; i < minimumChunkSize*2; i++) {
+          sendSilentAudio();
+        }
       }
-    }, 33); // Check every 33 ms
+    }, intervalDelay); // Check every x ms
 
     return () => clearInterval(intervalId); // Cleanup on unmount
   }, []);
@@ -103,7 +108,7 @@ const App = () => {
         <SimliFaceStream
           ref={simliFaceStreamRef}
           start={isCalling}
-          minimumChunkSize={15}
+          minimumChunkSize={minimumChunkSize}
         />
         <button onClick={toggleConversation}>
           {isCalling ? "Stop" : "Start"}
