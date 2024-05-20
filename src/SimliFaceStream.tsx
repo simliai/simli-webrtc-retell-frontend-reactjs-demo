@@ -54,7 +54,7 @@ const SimliFaceStream = forwardRef(
 
     const audioConstant = 0.042; // Audio constant for audio playback to tweak chunking
     const playbackDelay =
-      minimumChunkSize * (1000 / 30) + minimumChunkSize * audioConstant; // Playback delay for audio and video in milliseconds
+      minimumChunkSize * (1000 / 30) ; // Playback delay for audio and video in milliseconds
 
     // ------------------- VIDEO -------------------
     const frameQueue = useRef<Array<Array<ImageFrame>>>([]); // Queue for storing video data
@@ -154,16 +154,6 @@ const SimliFaceStream = forwardRef(
         ws_lipsync.close();
       };
     }, [audioContext]);
-
-    async function playback() {
-      while (audioQueue.current.length > 0) {
-        playFrameQueue();
-        const playbackDuration = await playAudioQueue();
-        await new Promise((resolve) =>
-          setTimeout(resolve, minimumChunkSize * (1000 / 30))
-        );
-      }
-    }
 
     /* Process Data Bytes to Audio and Video */
     const processToVideoAudio = async (dataArrayBuffer: ArrayBuffer) => {

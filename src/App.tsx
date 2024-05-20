@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import "./App.css";
-// import { RetellWebClient } from "retell-client-js-sdk";
 import { RetellWebClient } from "simli-retell-client-js-sdk";
 import SimliFaceStream from "./SimliFaceStream.tsx";
 
@@ -15,41 +14,45 @@ const webClient = new RetellWebClient();
 
 const App = () => {
   const [isCalling, setIsCalling] = useState(false);
+  const simliFaceStreamRef = useRef(null);
+  const lastAudioTimeRef = useRef(Date.now());
 
-  const simliFaceStreamRef = React.useRef(null);
-
-  // Initialize the SDK
   useEffect(() => {
-    // Setup event listeners
-    webClient.on("conversationStarted", () => {
-      console.log("conversationStarted");
-    });
+    const sendSilentAudio = () => {
+      const silence = new Uint8Array(256); // Adjust the size according to your needs
+      simliFaceStreamRef.current?.sendAudioDataToLipsync(silence);
+    };
 
+    const intervalId = setInterval(() => {
+      if (Date.now() - lastAudioTimeRef.current >= 33) {
+        sendSilentAudio();
+      }
+    }, 33); // Check every 33 ms
+
+    return () => clearInterval(intervalId); // Cleanup on unmount
+  }, []);
+
+  useEffect(() => {
     webClient.on("audio", (audio: Uint8Array) => {
       console.log("There is audio");
-      // Send audio to the SimliFaceStream component
+      lastAudioTimeRef.current = Date.now();
       if (simliFaceStreamRef.current) {
         simliFaceStreamRef.current.sendAudioDataToLipsync(audio);
       }
     });
 
+    webClient.on("conversationStarted", () =>
+      console.log("conversationStarted")
+    );
     webClient.on("conversationEnded", ({ code, reason }) => {
       console.log("Closed with code:", code, ", reason:", reason);
-      setIsCalling(false); // Update button to "Start" when conversation ends
+      setIsCalling(false);
     });
-
     webClient.on("error", (error) => {
       console.error("An error occurred:", error);
-      setIsCalling(false); // Update button to "Start" in case of error
+      setIsCalling(false);
     });
-
-    webClient.on("update", (update) => {
-      // Print live transcript as needed
-      console.log("update", update);
-      if (update.turntaking === "user_turn") {
-      } else if (update.turntaking === "agent_turn") {
-      }
-    });
+    webClient.on("update", (update) => console.log("update", update));
   }, []);
 
   const toggleConversation = async () => {
@@ -65,14 +68,13 @@ const App = () => {
             enableUpdate: true,
           })
           .catch(console.error);
-        setIsCalling(true); // Update button to "Stop" when conversation starts
+        setIsCalling(true);
       }
     }
   };
 
   async function registerCall(agentId: string): Promise<RegisterCallResponse> {
     try {
-      // Replace with your server url
       const response = await fetch(
         "http://localhost:8080/register-call-on-your-server",
         {
@@ -80,9 +82,7 @@ const App = () => {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            agentId: agentId,
-          }),
+          body: JSON.stringify({ agentId }),
         }
       );
 
@@ -90,11 +90,10 @@ const App = () => {
         throw new Error(`Error: ${response.status}`);
       }
 
-      const data: RegisterCallResponse = await response.json();
-      return data;
+      return await response.json();
     } catch (err) {
-      console.log(err);
-      throw new Error(err);
+      console.error(err);
+      throw err;
     }
   }
 
