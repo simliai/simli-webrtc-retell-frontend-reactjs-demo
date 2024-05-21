@@ -4,7 +4,7 @@ import React, {
   useRef,
   forwardRef,
   useImperativeHandle,
-} from 'react';
+} from "react";
 
 interface ImageFrame {
   frameWidth: number;
@@ -27,13 +27,14 @@ interface props {
 }
 
 const SimliFaceStream = forwardRef(
-  ({ start, minimumChunkSize = 15, faceId = 'tmp9i8bbq7c' }: props, ref) => {
+  ({ start, minimumChunkSize = 15, faceId = "tmp9i8bbq7c" }: props, ref) => {
     useImperativeHandle(ref, () => ({
       sendAudioDataToLipsync,
     }));
-    SimliFaceStream.displayName = 'SimliFaceStream';
+    SimliFaceStream.displayName = "SimliFaceStream";
 
-    const [ws, setWs] = useState<WebSocket | null>(null); // WebSocket connection for audio data
+    // const [ws, setWs] = useState<WebSocket | null>(null); // WebSocket connection for audio data
+    const ws = useRef<WebSocket | null>(null); // WebSocket connection for audio data
 
     const startTime = useRef<any>();
     const executionTime = useRef<any>();
@@ -53,8 +54,11 @@ const SimliFaceStream = forwardRef(
     const accumulatedAudioBuffer = useRef<Array<Uint8Array>>([]); // Buffer for accumulating incoming data until it reaches the minimum size for decoding
 
     const audioConstant = 0.042; // Audio constant for audio playback to tweak chunking
-    const playbackDelay =
-      minimumChunkSize * (1000 / 30) ; // Playback delay for audio and video in milliseconds
+    const playbackDelay = minimumChunkSize * (1000 / 30); // Playback delay for audio and video in milliseconds
+
+    const isQueuePlaying = useRef<boolean>(false); // Flag for checking if the queue is playing
+    const callCheckAndPlayFromQueueOnce = useRef<boolean>(true);
+    const audioQueueEmpty = useRef<boolean>(false);
 
     // ------------------- VIDEO -------------------
     const frameQueue = useRef<Array<Array<ImageFrame>>>([]); // Queue for storing video data
@@ -73,11 +77,10 @@ const SimliFaceStream = forwardRef(
     /* Main loop */
     useEffect(() => {
       const intervalId = setInterval(() => {
-        if (start && audioQueue.current.length > 0) {
-          playFrameQueue();
+        if (audioQueueEmpty.current && !callCheckAndPlayFromQueueOnce.current) {
           playAudioQueue();
         }
-      }, playbackDelay);
+      }, playbackDelay*2);
 
       return () => clearInterval(intervalId);
     }, [audioContext]);
@@ -88,19 +91,19 @@ const SimliFaceStream = forwardRef(
       if (start === false) return;
 
       // Initialize AudioContext
-      const newAudioContext = new AudioContext();
+      const newAudioContext = new AudioContext({ sampleRate: 16000 });
       setAudioContext(newAudioContext);
 
       // Intialize VideoContext
       const videoCanvas = canvasRef.current;
       if (videoCanvas) {
-        setVideoContext(videoCanvas?.getContext('2d'));
+        setVideoContext(videoCanvas?.getContext("2d"));
       }
     }, [start]);
 
     const sendAudioDataToLipsync = (audioData: Uint8Array) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(audioData);
+      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+        ws.current.send(audioData);
         startTimeFirstByte.current = performance.now(); // Start time for first byte
       }
     };
@@ -110,12 +113,12 @@ const SimliFaceStream = forwardRef(
       // Return if start is false
       if (start === false) return;
 
-      const ws_lipsync = new WebSocket('wss://api.simli.ai/LipsyncStream');
-      ws_lipsync.binaryType = 'arraybuffer';
-      setWs(ws_lipsync);
+      const ws_lipsync = new WebSocket("wss://api.simli.ai/LipsyncStream");
+      ws_lipsync.binaryType = "arraybuffer";
+      ws.current = ws_lipsync;
 
       ws_lipsync.onopen = () => {
-        console.log('Connected to lipsync server');
+        console.log("Connected to lipsync server");
 
         const metadata = {
           video_reference_url: `https://storage.googleapis.com/charactervideos/${faceId}/${faceId}.mp4`,
@@ -142,15 +145,15 @@ const SimliFaceStream = forwardRef(
         currentChunkSize.current += 1; // Increment chunk size by 1
 
         return () => {
-          if (ws) {
-            console.error('Closing Lipsync WebSocket');
-            ws.close();
+          if (ws.current) {
+            console.error("Closing Lipsync WebSocket");
+            ws.current.close();
           }
         };
       };
 
       return () => {
-        console.error('Closing Lipsync WebSocket');
+        console.error("Closing Lipsync WebSocket");
         ws_lipsync.close();
       };
     }, [audioContext]);
@@ -197,7 +200,7 @@ const SimliFaceStream = forwardRef(
       updateAudioQueue(audioData);
       setAudioQueueLengthState(audioQueue.current.length);
 
-      console.log('Received chunk from Lipsync');
+      console.log("Received chunk from Lipsync");
 
       // --------------- LOGGING ----------------
 
@@ -262,7 +265,7 @@ const SimliFaceStream = forwardRef(
     /* Decode ArrayBuffer data to Audio and push to audio queue */
     const updateAudioQueue = async (data: ArrayBuffer) => {
       if (currentChunkSize.current >= minimumChunkSize) {
-        console.log('--------- CHUNK SIZE REACHED', currentChunkSize);
+        console.log(`|| QUEUE LENGTH: ${audioQueue.current.length} ||`);
 
         // 1: Concatenate Uint8Arrays into a single Uint8Array
         const accumulatedAudioBufferTotalByteLength =
@@ -283,11 +286,19 @@ const SimliFaceStream = forwardRef(
         accumulatedAudioBuffer.current = [];
 
         // 3: Decode concatenated data as PCM16 audio
-        const decodedAudioData =
-          await createAudioBufferFromPCM16(concatenatedData);
+        const decodedAudioData = await createAudioBufferFromPCM16(
+          concatenatedData
+        );
 
         // 4: Push decoded audio data to the queue
         audioQueue.current.push(decodedAudioData);
+
+        // 5: Check and Play
+        if (callCheckAndPlayFromQueueOnce.current) {
+          console.log("Checking and playing from queue ONCE");
+          callCheckAndPlayFromQueueOnce.current = false;
+          playAudioQueue();
+        }
 
         currentChunkSize.current = 0; // Reset chunk size
       } else {
@@ -305,7 +316,7 @@ const SimliFaceStream = forwardRef(
       input: Uint8Array
     ): Promise<AudioBuffer> {
       // Ensure the input byte length is even
-      if (input.length % 2 !== 0) throw new Error('Input length must be even');
+      if (input.length % 2 !== 0) throw new Error("Input length must be even");
 
       const numSamples = input.length / 2;
       const audioBuffer = audioContext!.createBuffer(1, numSamples, 16000);
@@ -326,7 +337,18 @@ const SimliFaceStream = forwardRef(
     /* Play audio in the queue */
     async function playAudioQueue(): Promise<number> {
       const audioBuffer = audioQueue.current.shift();
-      if (!audioBuffer) return 0;
+      if (!audioBuffer) {
+        console.log("AudioBuffer is empty");
+        // TODO: Send silent audio data
+        // for (let i = 0; i < minimumChunkSize*2; i++) {
+        //   ws.current.send(new Uint8Array(256));
+        //   console.log("Sending silent audio data");
+        // }
+        audioQueueEmpty.current = true;
+        return 0;
+      } else {
+        playFrameQueue();
+      }
       const source = audioContext!.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioContext!.destination);
@@ -334,9 +356,9 @@ const SimliFaceStream = forwardRef(
       executionTime.current = performance.now() - startTime.current;
       setChunkCollectionTime(executionTime.current);
       console.log(
-        'Chunk collection time:',
+        "Chunk collection time:",
         executionTime.current / 1000,
-        'seconds'
+        "seconds"
       );
       startTime.current = null;
       executionTime.current = 0;
@@ -348,11 +370,18 @@ const SimliFaceStream = forwardRef(
         `Playing audio: AudioDuration: ${audioBuffer!.duration.toFixed(2)}`
       );
 
+      // Handle the audio end event
+      source.onended = () => {
+        console.log("Audio ended");
+        audioQueueEmpty.current = false;
+        playAudioQueue();
+      };
+
       // Return back audio duration
       return audioBuffer!.duration;
     }
 
-    return <canvas ref={canvasRef} width='512' height='512'></canvas>;
+    return <canvas ref={canvasRef} width="512" height="512"></canvas>;
   }
 );
 
