@@ -14,7 +14,7 @@ const webClient = new RetellWebClient();
 
 const App = () => {
   const [isCalling, setIsCalling] = useState(false);
-  const [minimumChunkSize, setMinimumChunkSize] = useState(10);
+  const [minimumChunkSize, setMinimumChunkSize] = useState(20);
   const simliFaceStreamRef = useRef(null);
   const lastAudioTimeRef = useRef(Date.now());
 
