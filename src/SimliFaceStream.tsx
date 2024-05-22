@@ -113,6 +113,7 @@ const SimliFaceStream = forwardRef(
         faceId: faceId,
         isJPG: true,
         apiKey: process.env.REACT_APP_SIMLI_KEY,
+        syncAudio: true,
       };
 
       const response = await fetch(
