@@ -2,6 +2,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');  // Import CORS module
 const Retell = require('retell-sdk');
+require('dotenv').config();
 
 const app = express();
 const port = 8080;
@@ -9,7 +10,7 @@ const port = 8080;
 app.use(cors()); // Enable CORS for all routes
 app.use(bodyParser.json());
 
-const retell = new Retell({apiKey:"API-KEY"});
+const retell = new Retell({apiKey:process.env.REACT_APP_RETELL_KEY});
 
 app.post('/register-call-on-your-server', async (req, res) => {
   try {

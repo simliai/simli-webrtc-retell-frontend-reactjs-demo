@@ -80,7 +80,7 @@ const SimliFaceStream = forwardRef(
         if (audioQueueEmpty.current && !callCheckAndPlayFromQueueOnce.current) {
           playAudioQueue();
         }
-      }, playbackDelay*2);
+      }, playbackDelay * 2);
 
       return () => clearInterval(intervalId);
     }, [audioContext]);
@@ -108,54 +108,70 @@ const SimliFaceStream = forwardRef(
       }
     };
 
+    const startAudioToVideoSession = async () => {
+      const metadata = {
+        faceId: faceId,
+        isJPG: true,
+        apiKey: process.env.REACT_APP_SIMLI_KEY,
+      };
+
+      const response = await fetch(
+        "https://api.simli.ai/startAudioToVideoSession",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(metadata),
+        }
+      );
+
+      return response.json();
+    };
+
     /* Connect with Lipsync stream */
     useEffect(() => {
       // Return if start is false
       if (start === false) return;
 
-      const ws_lipsync = new WebSocket("wss://api.simli.ai/LipsyncStream");
-      ws_lipsync.binaryType = "arraybuffer";
-      ws.current = ws_lipsync;
+      startAudioToVideoSession().then((data) => {
+        const sessionToken = data.session_token;
+        const ws_lipsync = new WebSocket("wss://api.simli.ai/LipsyncStream");
+        ws_lipsync.binaryType = "arraybuffer";
+        ws.current = ws_lipsync;
 
-      ws_lipsync.onopen = () => {
-        console.log("Connected to lipsync server");
-
-        const metadata = {
-          video_reference_url: `https://storage.googleapis.com/charactervideos/${faceId}/${faceId}.mp4`,
-          face_det_results: `https://storage.googleapis.com/charactervideos/${faceId}/${faceId}.pkl`,
-          isSuperResolution: true,
-          isJPG: true,
-          syncAudio: true,
+        ws_lipsync.onopen = () => {
+          console.log("Connected to lipsync server");
+          ws_lipsync.send(sessionToken);
         };
-        ws_lipsync.send(JSON.stringify(metadata));
-      };
 
-      ws_lipsync.onmessage = (event) => {
-        timeTillFirstByte.current =
-          performance.now() - startTimeFirstByte.current;
-        setTimeTillFirstByteState(timeTillFirstByte.current);
+        ws_lipsync.onmessage = (event) => {
+          timeTillFirstByte.current =
+            performance.now() - startTimeFirstByte.current;
+          setTimeTillFirstByteState(timeTillFirstByte.current);
 
-        if (startTime.current === null) {
-          startTime.current = performance.now();
-        }
+          if (startTime.current === null) {
+            startTime.current = performance.now();
+          }
 
-        // console.log("Received data arraybuffer from lipsync server:", event.data);
-        processToVideoAudio(event.data);
+          // console.log("Received data arraybuffer from lipsync server:", event.data);
+          processToVideoAudio(event.data);
 
-        currentChunkSize.current += 1; // Increment chunk size by 1
+          currentChunkSize.current += 1; // Increment chunk size by 1
+
+          return () => {
+            if (ws.current) {
+              console.error("Closing Lipsync WebSocket");
+              ws.current.close();
+            }
+          };
+        };
 
         return () => {
-          if (ws.current) {
-            console.error("Closing Lipsync WebSocket");
-            ws.current.close();
-          }
+          console.error("Closing Lipsync WebSocket");
+          ws_lipsync.close();
         };
-      };
-
-      return () => {
-        console.error("Closing Lipsync WebSocket");
-        ws_lipsync.close();
-      };
+      });
     }, [audioContext]);
 
     /* Process Data Bytes to Audio and Video */
@@ -205,12 +221,12 @@ const SimliFaceStream = forwardRef(
       // --------------- LOGGING ----------------
 
       // Log Everything
-      // console.log(
-      //   `${videoMessage}: ${imageData.byteLength}\n` +
-      //     `${audioMessage}: ${audioData.byteLength}\n` +
-      //     `endIndex: ${endIndex}`
-      // );
-      // console.warn("");
+      console.log(
+        `${videoMessage}: ${imageData.byteLength}\n` +
+          `${audioMessage}: ${audioData.byteLength}\n` +
+          `endIndex: ${endIndex}`
+      );
+      console.warn("");
     };
 
     /* Play video frames queue */
