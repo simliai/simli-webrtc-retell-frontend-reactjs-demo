@@ -80,7 +80,7 @@ const SimliFaceStream = forwardRef(
         if (audioQueueEmpty.current && !callCheckAndPlayFromQueueOnce.current) {
           playAudioQueue();
         }
-      }, playbackDelay * 2);
+      }, playbackDelay + 33);
 
       return () => clearInterval(intervalId);
     }, [audioContext]);
@@ -222,12 +222,12 @@ const SimliFaceStream = forwardRef(
       // --------------- LOGGING ----------------
 
       // Log Everything
-      console.log(
-        `${videoMessage}: ${imageData.byteLength}\n` +
-          `${audioMessage}: ${audioData.byteLength}\n` +
-          `endIndex: ${endIndex}`
-      );
-      console.warn("");
+      // console.log(
+      //   `${videoMessage}: ${imageData.byteLength}\n` +
+      //     `${audioMessage}: ${audioData.byteLength}\n` +
+      //     `endIndex: ${endIndex}`
+      // );
+      // console.warn("");
     };
 
     /* Play video frames queue */

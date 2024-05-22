@@ -18,25 +18,25 @@ const App = () => {
   const simliFaceStreamRef = useRef(null);
   const lastAudioTimeRef = useRef(Date.now());
 
-  // useEffect(() => {
-  //   const sendSilentAudio = () => {
-  //     const silence = new Uint8Array(256); // Adjust the size according to your needs
-  //     simliFaceStreamRef.current?.sendAudioDataToLipsync(silence);
-  //   };
+  useEffect(() => {
+    const sendSilentAudio = () => {
+      const silence = new Uint8Array(256); // Adjust the size according to your needs
+      simliFaceStreamRef.current?.sendAudioDataToLipsync(silence);
+    };
 
-  //   const intervalDelay = 33 * minimumChunkSize; // ms
+    const intervalDelay = 33 * minimumChunkSize; // ms
 
-  //   const intervalId = setInterval(() => {
-  //     if (Date.now() - lastAudioTimeRef.current >= intervalDelay) {
-  //       console.log("SILENCE!");
-  //       for (let i = 0; i < minimumChunkSize*1; i++) {
-  //         sendSilentAudio();
-  //       }
-  //     }
-  //   }, intervalDelay); // Check every x ms
+    const intervalId = setInterval(() => {
+      if (Date.now() - lastAudioTimeRef.current >= intervalDelay) {
+        console.log("SILENCE!");
+        for (let i = 0; i < minimumChunkSize*2; i++) {
+          sendSilentAudio();
+        }
+      }
+    }, intervalDelay); // Check every x ms
 
-  //   return () => clearInterval(intervalId); // Cleanup on unmount
-  // }, []);
+    return () => clearInterval(intervalId); // Cleanup on unmount
+  }, []);
 
   useEffect(() => {
     webClient.on("audio", (audio: Uint8Array) => {
