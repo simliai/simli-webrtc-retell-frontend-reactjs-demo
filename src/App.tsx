@@ -3,7 +3,7 @@ import "./App.css";
 import { RetellWebClient } from "simli-retell-client-js-sdk";
 import SimliFaceStream from "./SimliFaceStream.tsx";
 
-const agentId = "bca2843166dd248fd687beede0feb27d";
+const agentId = "640619f3e4d5bbe7aceaa1181ebcc141";
 
 interface RegisterCallResponse {
   callId?: string;
@@ -14,7 +14,7 @@ const webClient = new RetellWebClient();
 
 const App = () => {
   const [isCalling, setIsCalling] = useState(false);
-  const [minimumChunkSize, setMinimumChunkSize] = useState(8);
+  const [minimumChunkSize, setMinimumChunkSize] = useState(15);
   const simliFaceStreamRef = useRef(null);
   const lastAudioTimeRef = useRef(Date.now());
 

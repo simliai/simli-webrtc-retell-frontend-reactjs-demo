@@ -27,7 +27,7 @@ interface props {
 }
 
 const SimliFaceStream = forwardRef(
-  ({ start, minimumChunkSize = 15, faceId = '0beacf78-5e03-4fe6-9ed3-dd80c35cc8e0' }: props, ref) => {
+  ({ start, minimumChunkSize = 8, faceId = 'tmp9i8bbq7c' }: props, ref) => {
     useImperativeHandle(ref, () => ({
       sendAudioDataToLipsync,
     }));
