@@ -27,7 +27,7 @@ interface props {
 }
 
 const SimliFaceStream = forwardRef(
-  ({ start, minimumChunkSize = 15, faceId = 'tmp9i8bbq7c' }: props, ref) => {
+  ({ start, minimumChunkSize = 15, faceId = '0beacf78-5e03-4fe6-9ed3-dd80c35cc8e0' }: props, ref) => {
     useImperativeHandle(ref, () => ({
       sendAudioDataToLipsync,
     }));
@@ -111,25 +111,25 @@ const SimliFaceStream = forwardRef(
       }
     };
 
-    const startAudioToVideoSession = async () => {
+    const StartAudioToVideoSession = async (faceId: string, isJPG: Boolean, syncAudio: Boolean) => {
       const metadata = {
         faceId: faceId,
-        isJPG: true,
-        apiKey: process.env.NEXT_PUBLIC_SIMLI_API_KEY,
-        syncAudio: true,
+        isJPG: isJPG,
+        apiKey: process.env.REACT_APP_SIMLI_KEY,
+        syncAudio: syncAudio,
       };
-
+    
       const response = await fetch(
         'https://api.simli.ai/startAudioToVideoSession',
         {
           method: 'POST',
+          body: JSON.stringify(metadata),
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(metadata),
         }
       );
-
+    
       return response.json();
     };
 
@@ -138,7 +138,7 @@ const SimliFaceStream = forwardRef(
       // Return if start is false
       if (start === false) return;
 
-      startAudioToVideoSession().then((data) => {
+      StartAudioToVideoSession(faceId, true, true).then((data) => {
         const sessionToken = data.session_token;
         const ws_lipsync = new WebSocket('wss://api.simli.ai/LipsyncStream');
         ws_lipsync.binaryType = 'arraybuffer';
@@ -176,7 +176,7 @@ const SimliFaceStream = forwardRef(
           ws_lipsync.close();
         };
       });
-    }, [audioContext]);
+    }, [audioContext, start]);
 
     /* Process Data Bytes to Audio and Video */
     const processToVideoAudio = async (dataArrayBuffer: ArrayBuffer) => {
