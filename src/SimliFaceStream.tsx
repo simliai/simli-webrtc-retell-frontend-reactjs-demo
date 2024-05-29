@@ -4,7 +4,7 @@ import React, {
   useRef,
   forwardRef,
   useImperativeHandle,
-} from 'react';
+} from "react";
 
 interface ImageFrame {
   frameWidth: number;
@@ -27,41 +27,53 @@ interface props {
 }
 
 const SimliFaceStream = forwardRef(
-  ({ start, minimumChunkSize = 8, faceId = 'tmp9i8bbq7c' }: props, ref) => {
+  ({ start, minimumChunkSize = 8, faceId = "tmp9i8bbq7c" }: props, ref) => {
     useImperativeHandle(ref, () => ({
       sendAudioDataToLipsync,
     }));
-    SimliFaceStream.displayName = 'SimliFaceStream';
+    SimliFaceStream.displayName = "SimliFaceStream";
 
     // const [ws, setWs] = useState<WebSocket | null>(null); // WebSocket connection for audio data
     const ws = useRef<WebSocket | null>(null); // WebSocket connection for audio data
 
     const startTime = useRef<any>();
     const executionTime = useRef<any>();
+    // NOTE: chunkCollectionTime is not in use
     const [chunkCollectionTime, setChunkCollectionTime] = useState<number>(0);
+    // NOTE: If I'm understanding this correctly,
+    // currentChunkSize is the number of chunks in the "buffer" / "waiting que"
+    // evaluate renaming it to "numberOfChunksInQue", "chunksInQue" or similar
     const currentChunkSize = useRef<number>(0); // Current chunk size for decoding
 
     const startTimeFirstByte = useRef<any>(null);
     const timeTillFirstByte = useRef<any>(null);
+
+    // NOTE: timeTillFirstByteState is not in use
     const [timeTillFirstByteState, setTimeTillFirstByteState] =
       useState<number>(0);
 
     // ------------------- AUDIO -------------------
     const audioContext = useRef<AudioContext | null>(null); // Ref for audio context
     const audioQueue = useRef<Array<AudioBuffer>>([]); // Ref for audio queue
+
+    // NOTE: audioQueueLengthState is not in use
     const [audioQueueLengthState, setAudioQueueLengthState] =
       useState<number>(0); // State for audio queue length
     const accumulatedAudioBuffer = useRef<Array<Uint8Array>>([]); // Buffer for accumulating incoming data until it reaches the minimum size for decoding
 
+    // NOTE: audioConstant is not in use
     const audioConstant = 0.042; // Audio constant for audio playback to tweak chunking
     const playbackDelay = minimumChunkSize * (1000 / 30); // Playback delay for audio and video in milliseconds
 
+    // NOTE: isQueuePlaying is not in use
     const isQueuePlaying = useRef<boolean>(false); // Flag for checking if the queue is playing
     const callCheckAndPlayFromQueueOnce = useRef<boolean>(true);
     const audioQueueEmpty = useRef<boolean>(false);
 
     // ------------------- VIDEO -------------------
     const frameQueue = useRef<Array<Array<ImageFrame>>>([]); // Queue for storing video data
+
+    // NOTE: frameQueueLengthState is not in use
     const [frameQueueLengthState, setFrameQueueLengthState] =
       useState<number>(0); // State for frame queue length
     const accumulatedFrameBuffer = useRef<Array<ImageFrame>>([]); // Buffer for accumulating incoming video data
@@ -70,7 +82,12 @@ const SimliFaceStream = forwardRef(
     const [videoContext, setVideoContext] =
       useState<CanvasRenderingContext2D | null>(null);
     const currentFrame = useRef(0);
+
+    // NOTE: fps variable is not used.
+    // I'm not sure if it's needed
+    // Maybe it should be used to calculate frameInterval?
     const fps = 30;
+
     // const frameInterval = 1000 / fps; // Calculate the time between frames in milliseconds
     const frameInterval = 30; // Time between frames in milliseconds (30 seems to work nice)
 
@@ -83,7 +100,13 @@ const SimliFaceStream = forwardRef(
       }, playbackDelay + 33);
 
       return () => clearInterval(intervalId);
-    }, [audioContext.current]);
+    }, [
+      audioContext.current,
+      // NOTE: These values should be in the dependency array
+      // Just because the use effect depends on them.
+      // playAudioQueue,
+      // playbackDelay
+    ]);
 
     /* Create AudioContext at the start */
     useEffect(() => {
@@ -94,13 +117,13 @@ const SimliFaceStream = forwardRef(
       const newAudioContext = new AudioContext({ sampleRate: 16000 });
       audioContext.current = newAudioContext;
 
-      console.log('AudioContext created');
+      console.log("AudioContext created");
 
       // Intialize VideoContext
       const videoCanvas = canvasRef.current;
       if (videoCanvas) {
-        setVideoContext(videoCanvas?.getContext('2d'));
-        console.log('VideoContext created');
+        setVideoContext(videoCanvas?.getContext("2d"));
+        console.log("VideoContext created");
       }
     }, [start]);
 
@@ -111,25 +134,29 @@ const SimliFaceStream = forwardRef(
       }
     };
 
-    const StartAudioToVideoSession = async (faceId: string, isJPG: Boolean, syncAudio: Boolean) => {
+    const startAudioToVideoSession = async (
+      faceId: string,
+      isJPG: Boolean,
+      syncAudio: Boolean
+    ) => {
       const metadata = {
         faceId: faceId,
         isJPG: isJPG,
         apiKey: process.env.REACT_APP_SIMLI_KEY,
         syncAudio: syncAudio,
       };
-    
+
       const response = await fetch(
-        'https://api.simli.ai/startAudioToVideoSession',
+        "https://api.simli.ai/startAudioToVideoSession",
         {
-          method: 'POST',
+          method: "POST",
           body: JSON.stringify(metadata),
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
         }
       );
-    
+
       return response.json();
     };
 
@@ -138,14 +165,22 @@ const SimliFaceStream = forwardRef(
       // Return if start is false
       if (start === false) return;
 
-      StartAudioToVideoSession(faceId, true, true).then((data) => {
+      /**
+       * NOTE:
+       * The functionality within the "then" method could potentially be a part of startAudioToVideoSession,
+       * or it should be wrapped inside another function
+       *
+       *
+       *
+       */
+      startAudioToVideoSession(faceId, true, true).then((data) => {
         const sessionToken = data.session_token;
-        const ws_lipsync = new WebSocket('wss://api.simli.ai/LipsyncStream');
-        ws_lipsync.binaryType = 'arraybuffer';
+        const ws_lipsync = new WebSocket("wss://api.simli.ai/LipsyncStream");
+        ws_lipsync.binaryType = "arraybuffer";
         ws.current = ws_lipsync;
 
         ws_lipsync.onopen = () => {
-          console.log('Connected to lipsync server');
+          console.log("Connected to lipsync server");
           ws_lipsync.send(sessionToken);
         };
 
@@ -165,18 +200,24 @@ const SimliFaceStream = forwardRef(
 
           return () => {
             if (ws.current) {
-              console.error('Closing Lipsync WebSocket');
+              console.error("Closing Lipsync WebSocket");
               ws.current.close();
             }
           };
         };
 
         return () => {
-          console.error('Closing Lipsync WebSocket');
+          console.error("Closing Lipsync WebSocket");
           ws_lipsync.close();
         };
       });
-    }, [audioContext, start]);
+    }, [
+      audioContext,
+      start,
+      // NOTE: these should likely be in the dependency array too
+      // faceId,
+      // processToVideoAudio
+    ]);
 
     /* Process Data Bytes to Audio and Video */
     const processToVideoAudio = async (dataArrayBuffer: ArrayBuffer) => {
@@ -188,9 +229,23 @@ const SimliFaceStream = forwardRef(
       // --------------- VIDEO DATA ----------------
 
       // Print first 5 bytes of the message as string
+      // NOTE: this is not in use, but it's for debugging?
       const videoMessage = new TextDecoder().decode(data.slice(0, 5));
 
       // Extracting frame metadata
+      /**
+       * NOTE: the below code has a bunch of "magic numbers", unsure if it's needed to document, but would be helpful to understand what's going on :)
+       * Especially this line is a bit confusing:
+       * from code: data.buffer.slice(0 + 9, 4 + 9)
+       * Why exactly this? What is the difference from the above to the below?
+       * Why not "data.buffer.slice(9, 13)"?
+       * Also, why do we get the frameIndex from 9, 13
+       *
+       * Recommended reading: https://stackoverflow.com/questions/47882/what-are-magic-numbers-and-why-do-some-consider-them-bad
+       *
+       */
+
+      // NOTE: frameIndex is not in use
       const frameIndex = new DataView(
         data.buffer.slice(0 + 9, 4 + 9)
       ).getUint32(0, true);
@@ -209,18 +264,20 @@ const SimliFaceStream = forwardRef(
 
       // --------------- AUDIO DATA ----------------
 
+      // NOTE: audioMessage is not in use, debugging use?
       const audioMessage = new TextDecoder().decode(
         data.slice(endIndex + 9, endIndex + 14)
       );
 
       // Extract Audio data
+      // NOTE: magic number 18?
       const audioData = data.subarray(endIndex + 18);
 
       // Push audio data to audio queue
       updateAudioQueue(audioData);
       setAudioQueueLengthState(audioQueue.current.length);
 
-      console.log('Received chunk from Lipsync');
+      console.log("Received chunk from Lipsync");
 
       // --------------- LOGGING ----------------
 
@@ -282,6 +339,7 @@ const SimliFaceStream = forwardRef(
       }
     };
 
+    // NOTE: The comments in this section are really helpful! :)
     /* Decode ArrayBuffer data to Audio and push to audio queue */
     const updateAudioQueue = async (data: ArrayBuffer) => {
       if (currentChunkSize.current >= minimumChunkSize) {
@@ -292,9 +350,9 @@ const SimliFaceStream = forwardRef(
         executionTime.current = performance.now() - startTime.current;
         setChunkCollectionTime(executionTime.current);
         console.log(
-          'Chunk collection time:',
+          "Chunk collection time:",
           executionTime.current / 1000,
-          'seconds'
+          "seconds"
         );
         startTime.current = null;
         executionTime.current = 0;
@@ -318,16 +376,17 @@ const SimliFaceStream = forwardRef(
         accumulatedAudioBuffer.current = [];
 
         // 3: Decode concatenated data as PCM16 audio
-        console.log('Decoding audio data', concatenatedData);
-        const decodedAudioData =
-          await createAudioBufferFromPCM16(concatenatedData);
+        console.log("Decoding audio data", concatenatedData);
+        const decodedAudioData = await createAudioBufferFromPCM16(
+          concatenatedData
+        );
 
         // 4: Push decoded audio data to the queue
         audioQueue.current.push(decodedAudioData);
 
         // 5: Check and Play
         if (callCheckAndPlayFromQueueOnce.current) {
-          console.log('Checking and playing from queue ONCE');
+          console.log("Checking and playing from queue ONCE");
           callCheckAndPlayFromQueueOnce.current = false;
           playAudioQueue();
         }
@@ -348,7 +407,7 @@ const SimliFaceStream = forwardRef(
       input: Uint8Array
     ): Promise<AudioBuffer> {
       // Ensure the input byte length is even
-      if (input.length % 2 !== 0) throw new Error('Input length must be even');
+      if (input.length % 2 !== 0) throw new Error("Input length must be even");
 
       const numSamples = input.length / 2;
       const audioBuffer = audioContext.current!.createBuffer(
@@ -374,7 +433,7 @@ const SimliFaceStream = forwardRef(
     async function playAudioQueue(): Promise<number> {
       const audioBuffer = audioQueue.current.shift();
       if (!audioBuffer) {
-        console.log('AudioBuffer is empty');
+        console.log("AudioBuffer is empty");
         // TODO: Send silent audio data
         // for (let i = 0; i < minimumChunkSize*2; i++) {
         //   ws.current.send(new Uint8Array(256));
@@ -398,7 +457,7 @@ const SimliFaceStream = forwardRef(
 
       // Handle the audio end event
       source.onended = () => {
-        console.log('Audio ended');
+        console.log("Audio ended");
         audioQueueEmpty.current = false;
         playAudioQueue();
       };
@@ -407,7 +466,7 @@ const SimliFaceStream = forwardRef(
       return audioBuffer!.duration;
     }
 
-    return <canvas ref={canvasRef} width='512' height='512'></canvas>;
+    return <canvas ref={canvasRef} width="512" height="512"></canvas>;
   }
 );
 
