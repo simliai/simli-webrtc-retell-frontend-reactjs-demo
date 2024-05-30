@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useRef } from "react";
 import "./App.css";
 import { RetellWebClient } from "simli-retell-client-js-sdk";
-import SimliFaceStream from "./SimliFaceStream.tsx";
+import SimliFaceStream from "./SimliFaceStream";
 
 const agentId = "640619f3e4d5bbe7aceaa1181ebcc141";
+const faceId = "tmp9i8bbq7c";
 
 interface RegisterCallResponse {
   callId?: string;
@@ -14,34 +15,13 @@ const webClient = new RetellWebClient();
 
 const App = () => {
   const [isCalling, setIsCalling] = useState(false);
-  const [minimumChunkSize, setMinimumChunkSize] = useState(15);
+  const [minimumChunkSize, setMinimumChunkSize] = useState(4);
+  const [simliSessionToken, setSimliSessionToken] = useState(null);
   const simliFaceStreamRef = useRef(null);
-  const lastAudioTimeRef = useRef(Date.now());
-
-  useEffect(() => {
-    const sendSilentAudio = () => {
-      const silence = new Uint8Array(256); // Adjust the size according to your needs
-      simliFaceStreamRef.current?.sendAudioDataToLipsync(silence);
-    };
-
-    const intervalDelay = 33 * minimumChunkSize; // ms
-
-    const intervalId = setInterval(() => {
-      if (Date.now() - lastAudioTimeRef.current >= intervalDelay) {
-        console.log("SILENCE!");
-        for (let i = 0; i < minimumChunkSize*2; i++) {
-          sendSilentAudio();
-        }
-      }
-    }, intervalDelay); // Check every x ms
-
-    return () => clearInterval(intervalId); // Cleanup on unmount
-  }, []);
 
   useEffect(() => {
     webClient.on("audio", (audio: Uint8Array) => {
       console.log("There is audio");
-      lastAudioTimeRef.current = Date.now();
       if (simliFaceStreamRef.current) {
         simliFaceStreamRef.current.sendAudioDataToLipsync(audio);
       }
@@ -65,6 +45,10 @@ const App = () => {
     if (isCalling) {
       webClient.stopConversation();
     } else {
+      const simliSessionResponse = await startAudioToVideoSession(faceId);
+      setSimliSessionToken(simliSessionResponse.session_token);
+      console.log("Simli session token", simliSessionResponse.session_token);
+
       const registerCallResponse = await registerCall(agentId);
       if (registerCallResponse.callId) {
         webClient
@@ -103,12 +87,39 @@ const App = () => {
     }
   }
 
+  const startAudioToVideoSession = async (
+    faceId: string,
+    isJPG: Boolean = true,
+    syncAudio: Boolean = true
+  ) => {
+    const metadata = {
+      faceId: faceId,
+      isJPG: isJPG,
+      apiKey: process.env.REACT_APP_SIMLI_KEY,
+      syncAudio: syncAudio,
+    };
+
+    const response = await fetch(
+      "https://api.simli.ai/startAudioToVideoSession",
+      {
+        method: "POST",
+        body: JSON.stringify(metadata),
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    return response.json();
+  };
+
   return (
     <div className="App">
       <header className="App-header">
         <SimliFaceStream
           ref={simliFaceStreamRef}
           start={isCalling}
+          sessionToken={simliSessionToken}
           minimumChunkSize={minimumChunkSize}
         />
         <br />
