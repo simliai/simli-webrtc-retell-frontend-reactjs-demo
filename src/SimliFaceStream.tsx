@@ -90,7 +90,9 @@ const SimliFaceStream = forwardRef(
       if (start === false) return;
 
       // Initialize AudioContext
-      const newAudioContext = new AudioContext({ sampleRate: 16000 });
+      const newAudioContext = new AudioContext({
+        sampleRate: 16000,
+      });
       audioContext.current = newAudioContext;
 
       console.log("AudioContext created");
@@ -417,10 +419,36 @@ const SimliFaceStream = forwardRef(
       }
       const source = audioContext.current!.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(audioContext.current!.destination);
+
+      // Create a gain node to control volume
+      const gainNode = audioContext.current!.createGain();
+      source.connect(gainNode);
+      gainNode.connect(audioContext.current!.destination);
+
+      // Create a volume parameter
+      const volume = gainNode.gain;
+
+      // Set up crossfade
+      const fadeSpeed = 0.015; // seconds
+      const startVolume = 0.4; // 0.0 to 1.0
+      const endVolume = 0.0; // 0.0 to 1.0
+
+      // Fade in the beginning of the sample
+      volume.setValueAtTime(startVolume, audioContext.current!.currentTime);
+      volume.linearRampToValueAtTime(
+        1.0,
+        audioContext.current!.currentTime + fadeSpeed
+      );
+
+      // Fade out the end of the sample
+      // volume.linearRampToValueAtTime(
+      //   endVolume,
+      //   audioContext.current!.currentTime + audioBuffer!.duration - fadeSpeed
+      // );
 
       // Start playback
       source.start(0);
+
 
       console.log(
         `Playing audio: AudioDuration: ${audioBuffer!.duration.toFixed(2)}`
