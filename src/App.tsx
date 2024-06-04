@@ -15,7 +15,7 @@ const webClient = new RetellWebClient();
 
 const App = () => {
   const [isCalling, setIsCalling] = useState(false);
-  const [minimumChunkSize, setMinimumChunkSize] = useState(22);
+  const [minimumChunkSize, setMinimumChunkSize] = useState(8);
   const [simliSessionToken, setSimliSessionToken] = useState(null);
   const simliFaceStreamRef = useRef(null);
 

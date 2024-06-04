@@ -47,7 +47,7 @@ const SimliFaceStream = forwardRef(
     const audioContext = useRef<AudioContext | null>(null); // Ref for audio context
     const audioQueue = useRef<Array<AudioBuffer>>([]); // Ref for audio queue
 
-    const accumulatedAudioBuffer = useRef<Array<Uint8Array>>([]); // Buffer for accumulating incoming data until it reaches the minimum size for decoding
+    const accumulatedAudioBuffer = useRef<Uint8Array>(null); // Buffer for accumulating incoming data until it reaches the minimum size for decoding
 
     const playbackDelay = minimumChunkSize * (1000 / 30); // Playback delay for audio and video in milliseconds
 
@@ -73,7 +73,7 @@ const SimliFaceStream = forwardRef(
         if (audioQueueEmpty.current && !callCheckAndPlayFromQueueOnce.current) {
           playAudioQueue();
         }
-      }, playbackDelay + 33); // Add 33ms to the playback delay to give more time for chunk collection
+      }, playbackDelay + 10); // Add 10ms to the playback delay to give more time for chunk collection
 
       return () => clearInterval(intervalId);
     }, [
@@ -195,8 +195,6 @@ const SimliFaceStream = forwardRef(
       // Push audio data to audio queue
       updateAudioQueue(audioData);
 
-      console.log("Received chunk from Lipsync");
-
       // --------------- LOGGING ----------------
 
       // console.log(
@@ -239,6 +237,7 @@ const SimliFaceStream = forwardRef(
         }
 
         // console.log("Received data arraybuffer from lipsync server:", event.data);
+        console.log("Received chunk from Lipsync");
         processToVideoAudio(event.data);
 
         numberOfChunksInQue.current += 1; // Increment chunk size by 1
@@ -313,8 +312,9 @@ const SimliFaceStream = forwardRef(
     };
 
     /* Decode ArrayBuffer data to Audio and push to audio queue */
-    const updateAudioQueue = async (data: ArrayBuffer) => {
+    const updateAudioQueue = async (data: Uint8Array) => {
       if (numberOfChunksInQue.current >= minimumChunkSize) {
+        console.log("1) Decoding audio at time: ", performance.now());
         console.log(`|| QUEUE LENGTH: ${audioQueue.current.length} ||`);
 
         // If the accumulated data reaches the minimum chunk size, decode and push to the queue
@@ -328,34 +328,19 @@ const SimliFaceStream = forwardRef(
         startTime.current = null;
         executionTime.current = 0;
 
-        // 1: Concatenate Uint8Arrays into a single Uint8Array
-        const accumulatedAudioBufferTotalByteLength =
-          accumulatedAudioBuffer.current.reduce(
-            (total, array) => total + array.byteLength,
-            0
-          );
-        const concatenatedData = new Uint8Array(
-          accumulatedAudioBufferTotalByteLength
+        // 1: Decode concatenated data as PCM16 audio
+        console.log("Decoding audio data", accumulatedAudioBuffer.current);
+        const decodedAudioData = await createAudioBufferFromPCM16(
+          accumulatedAudioBuffer.current
         );
-        let offset = 0;
-        for (const array of accumulatedAudioBuffer.current) {
-          concatenatedData.set(array, offset);
-          offset += array.byteLength;
-        }
 
         // 2: Reset accumulated data buffer
-        accumulatedAudioBuffer.current = [];
+        accumulatedAudioBuffer.current = null;
 
-        // 3: Decode concatenated data as PCM16 audio
-        console.log("Decoding audio data", concatenatedData);
-        const decodedAudioData = await createAudioBufferFromPCM16(
-          concatenatedData
-        );
-
-        // 4: Push decoded audio data to the queue
+        // 3: Push decoded audio data to the queue
         audioQueue.current.push(decodedAudioData);
 
-        // 5: Check and Play only once at start
+        // 4: Check and Play only once at start
         if (callCheckAndPlayFromQueueOnce.current) {
           console.log("Checking and playing from queue ONCE");
           callCheckAndPlayFromQueueOnce.current = false;
@@ -364,39 +349,72 @@ const SimliFaceStream = forwardRef(
 
         numberOfChunksInQue.current = 0; // Reset chunk size
       } else {
-        // Else: Accumulate received data
         if (!accumulatedAudioBuffer.current) {
-          accumulatedAudioBuffer.current = [new Uint8Array(data)];
+          // If there is no accumulated data, set the data as the accumulated data
+          accumulatedAudioBuffer.current = data;
         } else {
-          accumulatedAudioBuffer.current.push(new Uint8Array(data));
+          // Concatenate Uint8Arrays into a single Uint8Array
+          const combinedUint8Array = new Uint8Array(
+            accumulatedAudioBuffer.current.length + data.length
+          );
+          combinedUint8Array.set(accumulatedAudioBuffer.current, 0);
+          combinedUint8Array.set(data, accumulatedAudioBuffer.current.length);
+          accumulatedAudioBuffer.current = combinedUint8Array;
         }
       }
     };
 
     /* Helper function to decode ArrayBuffer as PCM16 */
-    async function createAudioBufferFromPCM16(
-      input: Uint8Array
-    ): Promise<AudioBuffer> {
+    // async function createAudioBufferFromPCM16(
+    //   input: Uint8Array
+    // ): Promise<AudioBuffer> {
+    //   // Ensure the input byte length is even
+    //   if (input.length % 2 !== 0) throw new Error("Input length must be even");
+
+    //   const numSamples = input.length / 2;
+    //   const audioBuffer = audioContext.current!.createBuffer(
+    //     1,
+    //     numSamples,
+    //     16000
+    //   );
+    //   const channelData = audioBuffer.getChannelData(0);
+
+    //   for (let i = 0, j = 0; i < input.length; i += 2, j++) {
+    //     // Little-endian byte order
+    //     let int16 = (input[i + 1] << 8) | input[i];
+    //     // Convert from uint16 to int16
+    //     if (int16 >= 0x8000) int16 |= ~0xffff;
+    //     // Normalize to range -1.0 to 1.0
+    //     channelData[j] = int16 / 32768.0;
+    //   }
+
+    //   return audioBuffer;
+    // }
+
+    /* Helper function to decode ArrayBuffer as PCM16 */
+    async function createAudioBufferFromPCM16(input: Uint8Array): Promise<AudioBuffer> {
       // Ensure the input byte length is even
       if (input.length % 2 !== 0) throw new Error("Input length must be even");
-
+    
       const numSamples = input.length / 2;
-      const audioBuffer = audioContext.current!.createBuffer(
-        1,
-        numSamples,
-        16000
-      );
+      const audioBuffer = audioContext.current!.createBuffer(1, numSamples, 16000);
       const channelData = audioBuffer.getChannelData(0);
-
+    
+      // Convert Uint8Array to Int16Array
+      const int16Array = new Int16Array(numSamples);
       for (let i = 0, j = 0; i < input.length; i += 2, j++) {
-        // Little-endian byte order
-        let int16 = (input[i + 1] << 8) | input[i];
-        // Convert from uint16 to int16
-        if (int16 >= 0x8000) int16 |= ~0xffff;
-        // Normalize to range -1.0 to 1.0
-        channelData[j] = int16 / 32768.0;
+        int16Array[j] = (input[i + 1] << 8) | input[i];
       }
-
+    
+      // Normalize Int16Array to Float32Array
+      const float32Array = new Float32Array(numSamples);
+      for (let i = 0; i < numSamples; i++) {
+        float32Array[i] = int16Array[i] / 32768.0;
+      }
+    
+      // Copy Float32Array to channelData
+      channelData.set(float32Array);
+    
       return audioBuffer;
     }
 
@@ -419,36 +437,25 @@ const SimliFaceStream = forwardRef(
       }
       const source = audioContext.current!.createBufferSource();
       source.buffer = audioBuffer;
+      // source.connect(audioContext.current!.destination);
 
       // Create a gain node to control volume
       const gainNode = audioContext.current!.createGain();
+      
+      // Amplify the audio volume
+      gainNode.gain.value = 2.0;
       source.connect(gainNode);
       gainNode.connect(audioContext.current!.destination);
 
-      // Create a volume parameter
-      const volume = gainNode.gain;
+      // Calculate the time at which the last x ms of the audio starts
+      const lastmsStartTime = audioBuffer.duration - 0.020;
 
-      // Set up crossfade
-      const fadeSpeed = 0.015; // seconds
-      const startVolume = 0.4; // 0.0 to 1.0
-      const endVolume = 0.0; // 0.0 to 1.0
-
-      // Fade in the beginning of the sample
-      volume.setValueAtTime(startVolume, audioContext.current!.currentTime);
-      volume.linearRampToValueAtTime(
-        1.0,
-        audioContext.current!.currentTime + fadeSpeed
-      );
-
-      // Fade out the end of the sample
-      // volume.linearRampToValueAtTime(
-      //   endVolume,
-      //   audioContext.current!.currentTime + audioBuffer!.duration - fadeSpeed
-      // );
+      // Decrement the audio at the last x ms of audio
+      gainNode.gain.setTargetAtTime(0.5, audioContext.current!.currentTime + lastmsStartTime, 0.01);
 
       // Start playback
+      console.log("2) Playing audio at time: ", performance.now());
       source.start(0);
-
 
       console.log(
         `Playing audio: AudioDuration: ${audioBuffer!.duration.toFixed(2)}`
