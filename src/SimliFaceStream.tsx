@@ -7,6 +7,7 @@ import React, {
 } from "react";
 
 import {moduleCode} from "./audioProcessor";
+import PCMPlayer from 'pcm-player';
 
 interface ImageFrame {
   frameWidth: number;
@@ -46,11 +47,12 @@ const SimliFaceStream = forwardRef(
     const timeTillFirstByte = useRef<any>(null);
 
     // ------------------- AUDIO -------------------
+    const audioPCMPlayer = useRef<PCMPlayer | null>(null); // Ref for audio PCM player
     const audioContext = useRef<AudioContext | null>(null); // Ref for audio context
     const audioNode = useRef<AudioWorkletNode | null>(null); // Ref for audio node
     const audioQueue = useRef<Array<AudioBuffer>>([]); // Ref for audio queue
 
-    const accumulatedAudioBuffer = useRef<Uint8Array>(null); // Buffer for accumulating incoming data until it reaches the minimum size for decoding
+    const accumulatedAudioBuffer = useRef<ArrayBuffer>(null); // Buffer for accumulating incoming data until it reaches the minimum size for decoding
 
     const playbackDelay = minimumChunkSize * (1000 / 30); // Playback delay for audio and video in milliseconds
 
@@ -74,6 +76,14 @@ const SimliFaceStream = forwardRef(
     useEffect(() => {
       // Return if start is false
       if (start === false) return;
+
+      audioPCMPlayer.current = new PCMPlayer({
+        inputCodec: 'Int16',
+        channels: 1,
+        sampleRate: 16000,
+        flushTime: 1000,
+        fftSize: 32,
+      });
 
       // Initialize AudioContext
       loadAudioWorklet();
@@ -190,6 +200,7 @@ const SimliFaceStream = forwardRef(
       const audioData = data.subarray(start_audioData, end_audioData);
 
       // --------------- Update Audio and Video Queue ---------------
+      console.log("Extracted audio buffer: ", audioData);
       updateAudioAndVideoQueue(audioData, imageFrame);
 
       // --------------- LOGGING ----------------
@@ -298,11 +309,33 @@ const SimliFaceStream = forwardRef(
       await drawFrame();
     };
 
-    const updateAudioAndVideoQueue = async (audioData: Uint8Array ,imageFrame: ImageFrame) => {
+    const Uint8ToFloat32 = (incomingData) => { // incoming data is a UInt8Array
+      var i, l = incomingData.length;
+      var outputData = new Float32Array(incomingData.length);
+      for (i = 0; i < l; i++) {
+          outputData[i] = (incomingData[i] - 128) / 128.0;
+      }
+      return outputData;
+    }
+
+    const Uint8ToInt16 = (incomingData) => { // incoming data is a UInt8Array
+      var i, l = incomingData.length;
+      var outputData = new Int16Array(incomingData.length);
+      for (i = 0; i < l; i++) {
+          outputData[i] = (incomingData[i] - 128) * 256;
+      }
+      return outputData;
+    }
+
+    const updateAudioAndVideoQueue = async (audioData: ArrayBuffer ,imageFrame: ImageFrame) => {
       if (numberOfChunksInQue.current >= minimumChunkSize) {
         // Update Audio Queue
-        console.log("Sending audio to AudioWorkletNode:", accumulatedAudioBuffer.current);
-        audioNode.current.port.postMessage(accumulatedAudioBuffer.current);
+        // audioNode.current.port.postMessage(accumulatedAudioBuffer.current);
+        
+        // pcm-player
+        console.log("AudioBuffer: ", audioData);
+        audioPCMPlayer.current?.feed(audioData);
+        
         accumulatedAudioBuffer.current = null;
 
         // Update Frame Queue
@@ -317,18 +350,31 @@ const SimliFaceStream = forwardRef(
         if (!accumulatedAudioBuffer.current) {
           accumulatedAudioBuffer.current = audioData;
         } else {
-          const combinedUint8Array = new Uint8Array(
-            accumulatedAudioBuffer.current.length + audioData.length
-          );
-          combinedUint8Array.set(accumulatedAudioBuffer.current, 0);
-          combinedUint8Array.set(audioData, accumulatedAudioBuffer.current.length);
-          accumulatedAudioBuffer.current = combinedUint8Array;
+          accumulatedAudioBuffer.current = concatenateArrayBuffers(accumulatedAudioBuffer.current, audioData);
         }
 
         // Update Frame Buffer
         accumulatedFrameBuffer.current.push(imageFrame);
       }
     };
+
+    const concatenateArrayBuffers = (buffer1, buffer2) => {
+      // Create a new ArrayBuffer with a size equal to the sum of the sizes of the two buffers
+      let concatenatedBuffer = new ArrayBuffer(buffer1.byteLength + buffer2.byteLength);
+  
+      // Create views for each buffer
+      let view1 = new Uint8Array(buffer1);
+      let view2 = new Uint8Array(buffer2);
+      let concatenatedView = new Uint8Array(concatenatedBuffer);
+  
+      // Copy the contents of the first buffer to the new buffer
+      concatenatedView.set(view1);
+  
+      // Copy the contents of the second buffer to the new buffer, starting after the first buffer
+      concatenatedView.set(view2, view1.byteLength);
+  
+      return concatenatedBuffer;
+  }
 
     const sendSilence = () => {
       const silence = new Uint8Array(1068 * minimumChunkSize);
