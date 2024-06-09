@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from "react";
 import "./App.css";
 import { RetellWebClient } from "simli-retell-client-js-sdk";
 import SimliFaceStream from "./SimliFaceStream";
+import PCMPlayer from "pcm-player";
 
 const agentId = "640619f3e4d5bbe7aceaa1181ebcc141";
 const faceId = "tmp9i8bbq7c";
@@ -15,13 +16,14 @@ const webClient = new RetellWebClient();
 
 const App = () => {
   const [isCalling, setIsCalling] = useState(false);
-  const [minimumChunkSize, setMinimumChunkSize] = useState(1);
+  const [minimumChunkSize, setMinimumChunkSize] = useState(15);
   const [simliSessionToken, setSimliSessionToken] = useState(null);
   const simliFaceStreamRef = useRef(null);
+  const pcmPlayer = useRef<PCMPlayer>(null);
 
   useEffect(() => {
     webClient.on("audio", (audio: Uint8Array) => {
-      console.log("There is audio");
+      // console.log("Retell audio:", audio);
       if (simliFaceStreamRef.current) {
         simliFaceStreamRef.current.sendAudioDataToLipsync(audio);
       }
@@ -64,6 +66,16 @@ const App = () => {
   };
 
   async function registerCall(agentId: string): Promise<RegisterCallResponse> {
+
+    pcmPlayer.current = new PCMPlayer({
+      inputCodec: 'Int16',
+      channels: 1,
+      sampleRate: 16000,
+      flushTime: 200,
+      fftSize: 32,
+    });
+    pcmPlayer.current.volume(1);
+
     try {
       const response = await fetch(
         "http://localhost:8080/register-call-on-your-server",

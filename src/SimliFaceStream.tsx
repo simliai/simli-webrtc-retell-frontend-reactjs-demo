@@ -50,9 +50,9 @@ const SimliFaceStream = forwardRef(
     const audioPCMPlayer = useRef<PCMPlayer | null>(null); // Ref for audio PCM player
     const audioContext = useRef<AudioContext | null>(null); // Ref for audio context
     const audioNode = useRef<AudioWorkletNode | null>(null); // Ref for audio node
-    const audioQueue = useRef<Array<AudioBuffer>>([]); // Ref for audio queue
+    const audioQueue = useRef<Array<Uint8Array>>([]); // Ref for audio queue
 
-    const accumulatedAudioBuffer = useRef<ArrayBuffer>(null); // Buffer for accumulating incoming data until it reaches the minimum size for decoding
+    const accumulatedAudioBuffer = useRef<Uint8Array>(null); // Buffer for accumulating incoming data until it reaches the minimum size for decoding
 
     const playbackDelay = minimumChunkSize * (1000 / 30); // Playback delay for audio and video in milliseconds
 
@@ -81,7 +81,7 @@ const SimliFaceStream = forwardRef(
         inputCodec: 'Int16',
         channels: 1,
         sampleRate: 16000,
-        flushTime: 1000,
+        flushTime: 1068,
         fftSize: 32,
       });
 
@@ -198,10 +198,11 @@ const SimliFaceStream = forwardRef(
 
       // Extract Audio data
       const audioData = data.subarray(start_audioData, end_audioData);
+      let audioDataUint8 = new Uint8Array(1068);
+      audioDataUint8.set(audioData, 0);
 
       // --------------- Update Audio and Video Queue ---------------
-      console.log("Extracted audio buffer: ", audioData);
-      updateAudioAndVideoQueue(audioData, imageFrame);
+      updateAudioAndVideoQueue(audioDataUint8, imageFrame);
 
       // --------------- LOGGING ----------------
 
@@ -245,7 +246,7 @@ const SimliFaceStream = forwardRef(
         }
 
         // console.log("Received data arraybuffer from lipsync server:", event.data);
-        console.log("Received chunk from Lipsync");
+        // console.log("Received chunk from Lipsync: ", event.data);
         processToVideoAudio(event.data);
 
         numberOfChunksInQue.current += 1; // Increment chunk size by 1
@@ -327,16 +328,30 @@ const SimliFaceStream = forwardRef(
       return outputData;
     }
 
-    const updateAudioAndVideoQueue = async (audioData: ArrayBuffer ,imageFrame: ImageFrame) => {
-      if (numberOfChunksInQue.current >= minimumChunkSize) {
-        // Update Audio Queue
+    const updateAudioAndVideoQueue = async (audioData: Uint8Array ,imageFrame: ImageFrame) => {
+
+      if (numberOfChunksInQue.current < minimumChunkSize || audioQueue.current.length < minimumChunkSize) {
+        // Update Audio Buffer
+        audioQueue.current.push(audioData);
+
+        // Update Frame Buffer
+        accumulatedFrameBuffer.current.push(imageFrame);
+      } else {
+        const chunkCollectionTime = (performance.now() - startTime.current).toFixed(2);
+        console.log("Chunk collection time:", chunkCollectionTime, "ms", 
+        "\nMinimum is", 33*minimumChunkSize, "ms");
+        startTime.current = null;
         // audioNode.current.port.postMessage(accumulatedAudioBuffer.current);
         
         // pcm-player
-        console.log("AudioBuffer: ", audioData);
-        audioPCMPlayer.current?.feed(audioData);
-        
-        accumulatedAudioBuffer.current = null;
+        // console.log("Accumlated Audio Buffer ", accumulatedAudioBuffer.current);
+        const audioQueueChunks = audioQueue.current;
+        console.log("Audio Queue Chunks ", audioQueueChunks);
+        audioQueue.current = [];
+
+        audioQueueChunks.forEach(audioChunk => {
+          audioPCMPlayer.current.feed(audioChunk);
+        });
 
         // Update Frame Queue
         frameQueue.current.push(accumulatedFrameBuffer.current);
@@ -345,18 +360,15 @@ const SimliFaceStream = forwardRef(
 
         // Reset chunk size
         numberOfChunksInQue.current = 0; 
-      } else {
-        // Update Audio Buffer
-        if (!accumulatedAudioBuffer.current) {
-          accumulatedAudioBuffer.current = audioData;
-        } else {
-          accumulatedAudioBuffer.current = concatenateArrayBuffers(accumulatedAudioBuffer.current, audioData);
-        }
-
-        // Update Frame Buffer
-        accumulatedFrameBuffer.current.push(imageFrame);
       }
     };
+
+    const concatenateUint8Arrays = (array1, array2) => {
+      let concatenatedArray = new Uint8Array(array1.length + array2.length);
+      concatenatedArray.set(array1);
+      concatenatedArray.set(array2, array1.length);
+      return concatenatedArray;
+    }
 
     const concatenateArrayBuffers = (buffer1, buffer2) => {
       // Create a new ArrayBuffer with a size equal to the sum of the sizes of the two buffers
