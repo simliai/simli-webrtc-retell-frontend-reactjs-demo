@@ -5,11 +5,11 @@ import SimliFaceStream from "./SimliFaceStream/SimliFaceStream";
 
 // Retell agent ID
 // You can get your agent ID from the Retell dashboard: https://beta.retellai.com/dashboard
-const agentId = "YOUR-RETELL-AGENT-ID";
+const agentId = "640619f3e4d5bbe7aceaa1181ebcc141";
 
 // Simli face ID
 // Get all the available face IDs: https://docs.simli.com/api-reference/endpoint/getPossibleFaceIDs
-const faceId = "tmp9i8bbq7c"; 
+const faceId = "5514e24d-6086-46a3-ace4-6a7264e5cb7c";
 
 interface RegisterCallResponse {
   callId?: string;
@@ -20,14 +20,14 @@ const webClient = new RetellWebClient();
 
 const App = () => {
   const [isCalling, setIsCalling] = useState(false);
-  const [minimumChunkSize, setMinimumChunkSize] = useState(15);
+  const [minimumChunkSize, setMinimumChunkSize] = useState(12);
   const [simliSessionToken, setSimliSessionToken] = useState(null);
   const simliFaceStreamRef = useRef(null);
 
   useEffect(() => {
     webClient.on("audio", (audio: Uint8Array) => {
       if (simliFaceStreamRef.current) {
-        simliFaceStreamRef.current.sendAudioDataToLipsync(audio);
+        simliFaceStreamRef.current.sendAudioData(audio);
       }
     });
 
@@ -42,7 +42,12 @@ const App = () => {
       console.error("An error occurred:", error);
       setIsCalling(false);
     });
-    webClient.on("update", (update) => console.log("update", update));
+    webClient.on("update", (update) => {
+      console.log("update", update);
+      if(update.turntaking === "user_turn") {
+        simliFaceStreamRef.current.interrupt();
+      }
+    });
   }, []);
 
   const toggleConversation = async () => {
