@@ -47,8 +47,6 @@ const SimliFaceStream = forwardRef(
     const audioContext = useRef<AudioContext | null>(null); // Ref for audio context
     const audioQueue = useRef<Array<Uint8Array>>([]); // Ref for audio queue
     const audioDataQueue = useRef<Array<Uint8Array>>([]); // Ref for audio data queue
-    const isSilent = useRef<boolean>(false);
-    const silenceTime = useRef<any>(); // Silence time for audio data
 
     // ------------------- VIDEO -------------------
     const frameQueue = useRef<Array<Array<ImageFrame>>>([]); // Queue for storing video data
@@ -59,21 +57,6 @@ const SimliFaceStream = forwardRef(
     const [videoContext, setVideoContext] =
       useState<CanvasRenderingContext2D | null>(null);
     const frameInterval = 33.375; // Time between frames in milliseconds
-
-    // useEffect(() => {
-    //   setInterval(() => {
-    //     const timeDifference = performance.now() - silenceTime.current;
-    //     if (
-    //       isSilent.current === true &&
-    //       silenceTime !== null &&
-    //       timeDifference > frameInterval * minimumChunkSize
-    //     ) {
-    //       console.log("Time difference:", timeDifference, "ms");
-    //       // sendSilence();
-    //       silenceTime.current = performance.now();
-    //     }
-    //   }, 10);
-    // }, []);
 
     useEffect(() => {
       setInterval(() => {
@@ -92,9 +75,6 @@ const SimliFaceStream = forwardRef(
     };
 
     const handlePCMPlayerOnstart = () => {
-      // Start recording silence time
-      silenceTime.current = performance.now();
-
       // Play video from queue
       playFrameQueue();
     };
@@ -128,11 +108,6 @@ const SimliFaceStream = forwardRef(
         onended() {
           handlePCMPlayerOnended();
         },
-        onsilent() {
-          if (isSilent.current === false) {
-            isSilent.current = true;
-          }
-        },
       });
       audioPCMPlayer.current.volume(1.0);
 
@@ -156,7 +131,6 @@ const SimliFaceStream = forwardRef(
     const sendAudioDataChunkToLipsync = (audioDataChunk: Uint8Array) => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         ws.current.send(audioDataChunk);
-        isSilent.current = false;
       }
     };
 
