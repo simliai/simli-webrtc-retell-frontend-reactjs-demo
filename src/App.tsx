@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import "./App.css";
 import { RetellWebClient } from "simli-retell-client-js-sdk";
-import SimliFaceStream from "./SimliFaceStream/SimliFaceStream";
+import WebRTC from "./WebRTC/WebRTC";
 
 // Retell agent ID
 // You can get your agent ID from the Retell dashboard: https://beta.retellai.com/dashboard
@@ -20,14 +20,12 @@ const webClient = new RetellWebClient();
 
 const App = () => {
   const [isCalling, setIsCalling] = useState(false);
-  const [minimumChunkSize, setMinimumChunkSize] = useState(12);
-  const [simliSessionToken, setSimliSessionToken] = useState(null);
-  const simliFaceStreamRef = useRef(null);
+  const webRTCRef = useRef(null);
 
   useEffect(() => {
     webClient.on("audio", (audio: Uint8Array) => {
-      if (simliFaceStreamRef.current) {
-        simliFaceStreamRef.current.sendAudioData(audio);
+      if (webRTCRef.current) {
+        webRTCRef.current.sendAudioData(audio);
       }
     });
 
@@ -45,7 +43,7 @@ const App = () => {
     webClient.on("update", (update) => {
       console.log("update", update);
       if(update.turntaking === "user_turn") {
-        simliFaceStreamRef.current.interrupt();
+        webRTCRef.current.interrupt();
       }
     });
   }, []);
@@ -54,10 +52,7 @@ const App = () => {
     if (isCalling) {
       webClient.stopConversation();
     } else {
-      const simliSessionResponse = await startAudioToVideoSession(faceId);
-      setSimliSessionToken(simliSessionResponse.session_token);
-      console.log("Simli session token", simliSessionResponse.session_token);
-
+      webRTCRef.current.start();
       const registerCallResponse = await registerCall(agentId);
       if (registerCallResponse.callId) {
         webClient
@@ -96,40 +91,12 @@ const App = () => {
     }
   }
 
-  const startAudioToVideoSession = async (
-    faceId: string,
-    isJPG: Boolean = true,
-    syncAudio: Boolean = true
-  ) => {
-    const metadata = {
-      faceId: faceId,
-      isJPG: isJPG,
-      apiKey: process.env.REACT_APP_SIMLI_KEY,
-      syncAudio: syncAudio,
-    };
-
-    const response = await fetch(
-      "https://api.simli.ai/startAudioToVideoSession",
-      {
-        method: "POST",
-        body: JSON.stringify(metadata),
-        headers: {
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    return response.json();
-  };
-
   return (
     <div className="App">
       <header className="App-header">
-        <SimliFaceStream
-          ref={simliFaceStreamRef}
-          start={isCalling}
-          sessionToken={simliSessionToken}
-          minimumChunkSize={minimumChunkSize}
+        <WebRTC
+          ref={webRTCRef}
+          faceID={faceId}
         />
         <br />
         <button onClick={toggleConversation}>
