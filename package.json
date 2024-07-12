@@ -15,7 +15,8 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
-    "retell-sdk": "^3.14.0",
+    "retell-client-js-sdk": "^2.0.2",
+    "retell-sdk": "^3.20.0",
     "simli-retell-client-js-sdk": "file:simli-retell-client-js-sdk",
     "stream": "^0.0.2"
   },

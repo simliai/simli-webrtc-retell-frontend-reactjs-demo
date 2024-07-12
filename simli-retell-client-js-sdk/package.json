@@ -1,6 +1,6 @@
 {
-  "name": "simli-retell-client-js-sdk",
-  "version": "1.0.0",
+  "name": "retell-client-js-sdk",
+  "version": "2.0.2",
   "description": "",
   "main": "dist/index.js",
   "module": "dist/index.m.js",
@@ -17,6 +17,6 @@
   },
   "dependencies": {
     "eventemitter3": "^5.0.1",
-    "isomorphic-ws": "^5.0.0"
+    "livekit-client": "^2.3.1"
   }
 }

@@ -1,137 +1,263 @@
-// retell-client-sdk.ts
-import { AudioWsClient } from "./audioWsClient";
 import { EventEmitter } from "eventemitter3";
-import { workletCode } from "./audioWorklet";
+import {
+  DataPacket_Kind,
+  RemoteParticipant,
+  RemoteTrack,
+  RemoteAudioTrack,
+  RemoteTrackPublication,
+  Room,
+  RoomEvent,
+  Track,
+} from "livekit-client";
 
-export interface StartConversationConfig {
-  callId: string;
-  sampleRate: number;
-  customStream?: MediaStream;
-  enableUpdate?: boolean;
+const hostUrl = "wss://retell-ai-4ihahnq7.livekit.cloud";
+const decoder = new TextDecoder();
+
+export interface StartCallConfig {
+  accessToken: string;
+  sampleRate?: number;
+  captureDeviceId?: string; // specific sink id for audio capture device
+  playbackDeviceId?: string; // specific sink id for audio playback device
+  emitRawAudioSamples?: boolean; // receive raw float32 audio samples (ex. for animation). Default to false.
+}
+
+declare global {
+  interface Window {
+    webkitAudioContext: typeof AudioContext;
+  }
 }
 
 export class RetellWebClient extends EventEmitter {
-  private liveClient: AudioWsClient;
-  private audioContext: AudioContext;
-  private isCalling: boolean = false;
-  private stream: MediaStream;
-  private audioNode: AudioWorkletNode;
+  // Room related
+  private room: Room;
+  private connected: boolean = false;
+
+  // Web audio related
+  public audioContext: AudioContext;
+  public sampleRate: number;
+
+  // Helper nodes and variables to analyze and animate based on audio
+  public isAgentTalking: boolean = false;
+
+  // Analyser node for all audio (agent + ambient sound), only available when
+  // emitRawAudioSamples is true. Can directly use modify this for visualization.
+  private audioAnalyzerNode: AnalyserNode;
+  private captureAudioFrame: number;
 
   constructor() {
     super();
   }
 
-  public async startConversation(
-    startConversationConfig: StartConversationConfig,
-  ): Promise<void> {
-    try {
-      await this.setupAudio(
-        startConversationConfig.sampleRate,
-        startConversationConfig.customStream,
-      );
-      this.liveClient = new AudioWsClient({
-        callId: startConversationConfig.callId,
-        enableUpdate: startConversationConfig.enableUpdate,
+  private getNewAudioContext(
+    startCallConfig: StartCallConfig,
+  ): AudioContext | null {
+    // @ts-ignore
+    let audioContextSupported: boolean =
+      typeof window !== "undefined" &&
+      (window.AudioContext || window.webkitAudioContext);
+    if (audioContextSupported) {
+      return new AudioContext({
+        latencyHint: "interactive",
+        sampleRate: startCallConfig.sampleRate,
       });
-      this.handleAudioEvents();
-      this.isCalling = true;
-    } catch (err) {
-      this.emit("error", (err as Error).message);
     }
   }
 
-  public stopConversation(): void {
-    this.isCalling = false;
-    this.liveClient?.close();
-    this.audioContext?.suspend();
-    this.audioNode?.disconnect();
-    delete this.audioNode; // Prevent memory leak by detaching the event handler
-    this.audioContext?.close(); // Properly close the audio context to release system audio resources
-    this.stream?.getTracks().forEach((track) => track.stop());
-
-    // Release references to allow for garbage collection
-    delete this.liveClient;
-    delete this.audioContext;
-    delete this.stream;
-  }
-
-  private async setupAudio(
-    sampleRate: number,
-    customStream?: MediaStream,
-  ): Promise<void> {
-    this.audioContext = new AudioContext({ sampleRate: sampleRate });
-
+  public async startCall(startCallConfig: StartCallConfig): Promise<void> {
     try {
-      this.stream =
-        customStream ||
-        (await navigator.mediaDevices.getUserMedia({
-          audio: {
-            sampleRate: sampleRate,
-            echoCancellation: true,
-            noiseSuppression: true,
-            channelCount: 1,
-          },
-        }));
-    } catch (error) {
-      throw new Error("User didn't give microphone permission");
-    }
+      // Create audio context
+      const audioContext = this.getNewAudioContext(startCallConfig);
+      if (audioContext == null) throw new Error("AudioContext not supported");
 
-    console.log("Audio worklet starting");
-    this.audioContext.resume();
-    const blob = new Blob([workletCode], { type: "application/javascript" });
-    const blobURL = URL.createObjectURL(blob);
-    await this.audioContext.audioWorklet.addModule(blobURL);
-    console.log("Audio worklet loaded");
-    this.audioNode = new AudioWorkletNode(
-      this.audioContext,
-      "capture-and-playback-processor",
-    );
-    console.log("Audio worklet setup");
-
-    this.audioNode.port.onmessage = (e) => {
-        if (this.liveClient != null) {
-            this.liveClient.send(e.data);
+      this.audioContext = audioContext;
+      if (this.audioContext.state === "suspended") {
+        try {
+          await this.audioContext.resume();
+        } catch (e: any) {
+          console.warn("Could not resume audio context", {
+            error: e,
+          });
+          throw new Error("AudioContext cannot be resumed");
         }
-    };
+      }
+      this.sampleRate = this.audioContext.sampleRate;
 
-    const source = this.audioContext.createMediaStreamSource(this.stream);
-    source.connect(this.audioNode);
-    this.audioNode.connect(this.audioContext.destination);
+      // Room options
+      this.room = new Room({
+        audioCaptureDefaults: {
+          autoGainControl: true,
+          echoCancellation: true,
+          noiseSuppression: true,
+          channelCount: 1, // always mono for input
+          deviceId: startCallConfig.captureDeviceId,
+          sampleRate: startCallConfig.sampleRate,
+        },
+        audioOutput: {
+          deviceId: startCallConfig.playbackDeviceId,
+        },
+        webAudioMix: {
+          audioContext: this.audioContext,
+        },
+      });
+
+      // Register handlers
+      this.handleRoomEvents();
+      if (startCallConfig.emitRawAudioSamples) {
+        this.audioAnalyzerNode = this.audioContext.createAnalyser();
+        this.audioAnalyzerNode.fftSize = 2048;
+      }
+      this.handleAudioEvents(startCallConfig);
+      this.handleDataEvents();
+
+      // Connect to room
+      await this.room.connect(hostUrl, startCallConfig.accessToken);
+      console.log("connected to room", this.room.name);
+
+      // Turns microphone track on
+      this.room.localParticipant.setMicrophoneEnabled(true);
+      this.connected = true;
+      this.emit("call_started");
+
+      // Start capturing audio samples
+      if (startCallConfig.emitRawAudioSamples) {
+        this.captureAudioFrame = window.requestAnimationFrame(() =>
+          this.captureAudioSamples(),
+        );
+      }
+    } catch (err) {
+      this.emit("error", "Error starting call");
+      console.error("Error starting call", err);
+      // Cleanup
+      this.stopCall();
+    }
   }
 
-  private handleAudioEvents(): void {
-    // Exposed
-    this.liveClient.on("open", () => {
-      this.emit("conversationStarted");
-    });
+  // Optional.
+  // Some browser does not support audio playback without user interaction
+  // Call this function inside a click/tap handler to start audio playback
+  public async startAudioPlayback() {
+    await this.room.startAudio();
+  }
 
-    this.liveClient.on("audio", (audio: Uint8Array) => {
-      // this.audioNode.port.postMessage(audio);
-      this.emit("audio", audio);
-    });
+  public stopCall(): void {
+    // Cleanup variables and disconnect from room
+    if (this.connected) {
+      this.connected = false;
+      this.emit("call_ended");
+      this.room?.disconnect();
+    }
 
-    this.liveClient.on("error", (error) => {
-      this.emit("error", error);
-      if (this.isCalling) {
-        this.stopConversation();
+    this.isAgentTalking = false;
+    delete this.room;
+    delete this.sampleRate;
+
+    if (this.audioAnalyzerNode) {
+      this.audioAnalyzerNode.disconnect();
+      delete this.audioAnalyzerNode;
+    }
+
+    if (this.audioContext) {
+      this.audioContext.close();
+      delete this.audioContext;
+    }
+
+    if (this.captureAudioFrame) {
+      window.cancelAnimationFrame(this.captureAudioFrame);
+      delete this.captureAudioFrame;
+    }
+  }
+
+  public mute(): void {
+    if (this.connected) this.room.localParticipant.setMicrophoneEnabled(false);
+  }
+
+  public unmute(): void {
+    if (this.connected) this.room.localParticipant.setMicrophoneEnabled(true);
+  }
+
+  private captureAudioSamples() {
+    if (!this.connected || !this.audioAnalyzerNode) return;
+    let bufferLength = this.audioAnalyzerNode.fftSize;
+    let dataArray = new Float32Array(bufferLength);
+    this.audioAnalyzerNode.getFloatTimeDomainData(dataArray);
+    this.emit("audio", dataArray);
+    this.captureAudioFrame = window.requestAnimationFrame(() =>
+      this.captureAudioSamples(),
+    );
+  }
+
+  private handleRoomEvents(): void {
+    this.room.on(
+      RoomEvent.ParticipantDisconnected,
+      (participant: RemoteParticipant) => {
+        if (participant?.identity === "server") {
+          // Agent hang up
+          this.stopCall();
+        }
+      },
+    );
+
+    this.room.on(RoomEvent.Disconnected, () => {
+      // room disconnected
+      if (this.connected) {
+        this.stopCall();
       }
     });
+  }
 
-    this.liveClient.on("close", (code: number, reason: string) => {
-      if (this.isCalling) {
-        this.stopConversation();
-      }
-      this.emit("conversationEnded", { code, reason });
-    });
+  private handleAudioEvents(startCallConfig: StartCallConfig): void {
+    this.room.on(
+      RoomEvent.TrackSubscribed,
+      (
+        track: RemoteTrack,
+        publication: RemoteTrackPublication,
+        participant: RemoteParticipant,
+      ) => {
+        if (track.kind === Track.Kind.Audio) {
+          if (
+            track instanceof RemoteAudioTrack &&
+            startCallConfig.emitRawAudioSamples
+          ) {
+            track.setWebAudioPlugins([this.audioAnalyzerNode]);
+          }
 
-    this.liveClient.on("update", (update) => {
-      this.emit("update", update);
-    });
+          // Start playing audio
+          track.attach();
+        }
+      },
+    );
+  }
 
-    // Not exposed
+  private handleDataEvents(): void {
+    this.room.on(
+      RoomEvent.DataReceived,
+      (
+        payload: Uint8Array,
+        participant?: RemoteParticipant,
+        kind?: DataPacket_Kind,
+        topic?: string,
+      ) => {
+        try {
+          // parse server data
+          if (participant?.identity !== "server") return;
 
-    this.liveClient.on("clear", () => {
-      this.audioNode.port.postMessage("clear");
-    });
+          let decodedData = decoder.decode(payload);
+          let event = JSON.parse(decodedData);
+          if (event.event_type === "update") {
+            this.emit("update", event);
+          } else if (event.event_type === "metadata") {
+            this.emit("metadata", event);
+          } else if (event.event_type === "agent_start_talking") {
+            this.isAgentTalking = true;
+            this.emit("agent_start_talking");
+          } else if (event.event_type === "agent_stop_talking") {
+            this.isAgentTalking = false;
+            this.emit("agent_stop_talking");
+          }
+        } catch (err) {
+          console.error("Error decoding data received", err);
+        }
+      },
+    );
   }
 }
