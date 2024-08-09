@@ -88,7 +88,13 @@ export class RetellWebClient extends EventEmitter {
     });
 
     this.liveClient.on("audio", (audio: Uint8Array) => {
-      this.playAudio(audio);
+      // Emit audio to the client and don't play it
+      this.emit("audio", audio);
+      if (!this.isTalking) {
+        this.isTalking = true;
+        this.emit("agentStartTalking");
+      }
+      // this.playAudio(audio);
     });
 
     this.liveClient.on("disconnect", () => {
@@ -178,7 +184,7 @@ export class RetellWebClient extends EventEmitter {
           if (eventName === "capture") {
             this.liveClient?.send(data[1]);
           } else if (eventName === "playback") {
-            // this.emit("audio", data[1]);
+            this.emit("audio", data[1]);
           }
         } else {
           if (data === "agent_stop_talking") {
